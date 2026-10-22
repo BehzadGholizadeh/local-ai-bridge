@@ -1,0 +1,11 @@
+node_modules/
+dist/
+release/
+*.log
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+# Never commit browser profiles or local data if you point LAB_DATA_DIR inside the repo
+profiles/
+.data/

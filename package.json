@@ -1,0 +1,85 @@
+{
+  "name": "local-ai-bridge",
+  "productName": "Local AI Bridge",
+  "version": "0.1.0",
+  "description": "Use ChatGPT and Grok from your desktop and from any OpenAI-compatible tool, through your own logged-in browser sessions. No API keys.",
+  "license": "MIT",
+  "author": "Behzad Gholizadeh",
+  "homepage": "https://github.com/BehzadGholizadeh/local-ai-bridge",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/BehzadGholizadeh/local-ai-bridge.git"
+  },
+  "main": "dist/main/main.js",
+  "scripts": {
+    "dev": "concurrently -k -n web,tsc,app -c magenta,blue,green \"vite\" \"tsc -p tsconfig.json -w --preserveWatchOutput\" \"wait-on tcp:127.0.0.1:5173 file:dist/main/main.js && electron . --dev\"",
+    "build": "tsc -p tsconfig.json && vite build",
+    "start": "npm run build && electron .",
+    "server": "node dist/headless.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p src/renderer/tsconfig.json",
+    "install-browser": "playwright-core install chromium",
+    "icon": "node scripts/gen-icon.mjs",
+    "dist": "npm run build && electron-builder"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "build": {
+    "appId": "io.github.behzadgholizadeh.localaibridge",
+    "productName": "Local AI Bridge",
+    "files": [
+      "dist/**",
+      "assets/**",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/playwright-core/**"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.png"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "assets/icon.png",
+      "category": "public.app-category.productivity"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "icon": "assets/icon.png",
+      "category": "Utility"
+    }
+  },
+  "dependencies": {
+    "playwright-core": "^1.64.1",
+    "turndown": "^7.2.4",
+    "turndown-plugin-gfm": "^1.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/turndown": "^5.0.6",
+    "@vitejs/plugin-react": "^6.1.2",
+    "concurrently": "^10.0.6",
+    "electron": "^45.0.0",
+    "electron-builder": "^26.15.3",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5",
+    "wait-on": "^9.5.1"
+  },
+  "allowScripts": {
+    "electron": true,
+    "electron-winstaller": false
+  }
+}
