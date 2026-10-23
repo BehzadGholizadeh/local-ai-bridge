@@ -21,11 +21,41 @@ export function extractReplyHtml(el: Element, contentSelectors: string[]): strin
       const wraps: [Element, boolean, boolean][] = [];
       const math: [Element, string, boolean][] = [];
       const preWrap: Element[] = [];
+      const codeBlocks: [Element, string, string][] = [];
+      const inCode: Element[] = [];
+
+      // A code block is a <pre>, or any block-level element in a monospace font. Its text is taken
+      // as rendered (innerText), so line breaks survive however the site builds the lines (one
+      // element per line, no "\n" text nodes): signed-in ChatGPT's code blocks otherwise came back
+      // as one flattened line.
+      const isMonoBlock = (o: Element): boolean => {
+        const st = getComputedStyle(o);
+        if (/^inline|contents|none/.test(st.display)) return false;
+        return /mono|courier|consolas|menlo/i.test(st.fontFamily);
+      };
+      const languageOf = (o: Element): string => {
+        const code = o.tagName === 'CODE' ? o : o.querySelector('code');
+        const cls = `${code?.getAttribute('class') ?? ''} ${o.getAttribute('class') ?? ''}`;
+        const fromClass = /(?:language|lang)-([\w+#.-]+)/.exec(cls)?.[1];
+        const fromAttr = o.getAttribute('data-language') ?? o.querySelector('[data-language]')?.getAttribute('data-language');
+        if (fromClass || fromAttr) return (fromClass || fromAttr)!.toLowerCase();
+        // A short label next to the block ("python", "tool"), as ChatGPT renders it.
+        const label = Array.from(o.parentElement?.children ?? []).find(
+          (s) => s !== o && !s.contains(o) && /^[\w+#.-]{1,24}$/.test((s as HTMLElement).innerText?.trim() ?? ''),
+        );
+        return label ? (label as HTMLElement).innerText.trim().toLowerCase() : '';
+      };
 
       // Read computed styles first (needs the live elements), mutate the clone afterwards.
       orig.forEach((o, i) => {
         const c = copy[i];
         if (!c) return;
+        if (inCode.some((block) => block.contains(o))) return;
+        if (o.tagName === 'PRE' || (isMonoBlock(o) && ((o as HTMLElement).innerText.includes('\n') || !!o.querySelector('code')))) {
+          codeBlocks.push([c, (o as HTMLElement).innerText.replace(/\n$/, ''), languageOf(o)]);
+          inCode.push(o);
+          return;
+        }
         const isMath = o.matches('[data-d-component="math"], .katex');
         if (isMath && !o.parentElement?.closest('[data-d-component="math"], .katex')) {
           const tex = o.querySelector('annotation[encoding="application/x-tex"]')?.textContent;
@@ -45,6 +75,14 @@ export function extractReplyHtml(el: Element, contentSelectors: string[]): strin
         }
       });
 
+      for (const [c, text, lang] of codeBlocks) {
+        const pre = document.createElement('pre');
+        const code = document.createElement('code');
+        if (lang) code.className = `language-${lang}`;
+        code.textContent = text;
+        pre.appendChild(code);
+        c.replaceWith(pre);
+      }
       for (const [c, tex, display] of math) {
         c.replaceWith(document.createTextNode(display ? `\n\n$$\n${tex}\n$$\n\n` : `$${tex}$`));
       }
@@ -76,15 +114,12 @@ export function extractReplyHtml(el: Element, contentSelectors: string[]): strin
           t.replaceWith(frag);
         }
       }
-      // Code blocks: move a short language label next to <pre> onto the <code> class.
+      // Drop the language labels that sat next to code blocks (now on the <code> class).
       for (const pre of Array.from(clone.querySelectorAll('pre'))) {
-        const label = Array.from(pre.parentElement?.children ?? []).find(
-          (s) => s !== pre && s.tagName === 'SPAN' && !s.children.length && /^[\w+#.-]{1,24}$/.test(s.textContent?.trim() ?? ''),
-        );
-        const code = pre.querySelector('code');
-        if (label && code && !/language-/.test(code.className)) {
-          code.classList.add(`language-${label.textContent!.trim().toLowerCase()}`);
-          label.remove();
+        const lang = /language-([\w+#.-]+)/.exec(pre.querySelector('code')?.className ?? '')?.[1];
+        if (!lang) continue;
+        for (const s of Array.from(pre.parentElement?.children ?? [])) {
+          if (s !== pre && !s.children.length && s.textContent?.trim().toLowerCase() === lang) s.remove();
         }
       }
       // Table cells: unwrap paragraphs so each cell stays on one line.

@@ -40,6 +40,8 @@ export interface SendResult {
   /** URL of the web conversation, to continue it later. Undefined if the site didn't assign one. */
   chatUrl?: string;
   aborted: boolean;
+  /** Raw HTML of the reply element (capped), for diagnosing replies that parse wrongly. */
+  html?: string;
 }
 
 interface ProviderDeps {
@@ -495,7 +497,7 @@ export class WebChatProvider extends EventEmitter {
     msgSelector: string,
     opts: SendOptions,
     timeoutMs: number,
-  ): Promise<{ text: string; aborted: boolean }> {
+  ): Promise<{ text: string; aborted: boolean; html?: string }> {
     const reply = page.locator(msgSelector).last();
     const started = Date.now();
     let text = '';
@@ -554,7 +556,10 @@ export class WebChatProvider extends EventEmitter {
       if (hit && !text.includes('\n\n')) throw new BridgeError('rate_limited', `${this.name}: ${text}`);
     }
     this.log.info(`reply complete (${text.length} chars, ${Math.round((Date.now() - started) / 1000)}s)`);
-    return { text, aborted: false };
+    const html = await reply
+      .evaluate((el) => el.outerHTML.replace(/<!--[^>]*-->/g, '').slice(0, 200_000))
+      .catch(() => undefined);
+    return { text, aborted: false, html };
   }
 }
 

@@ -36,7 +36,7 @@ export type AgentEvent =
   /** Something the agent did on its own, e.g. re-prompting the model. */
   | { type: 'note'; text: string }
   /** One round trip with the model: the exact message sent and the raw reply (for the run log). */
-  | { type: 'exchange'; step: number; prompt: string; reply: string; chatUrl?: string }
+  | { type: 'exchange'; step: number; prompt: string; reply: string; chatUrl?: string; replyHtml?: string }
   | { type: 'error'; message: string }
   | { type: 'stopped' };
 
@@ -127,15 +127,16 @@ export class Agent extends EventEmitter {
         });
         if (reply.chatUrl) this.chatUrl = reply.chatUrl;
         this.transcript.push({ role: 'user', text: message }, { role: 'assistant', text: reply.text });
-        this.emitEvent({ type: 'exchange', step, prompt: message, reply: reply.text, chatUrl: this.chatUrl });
-
         const parsed = parseReply(reply.text);
+        // Keep the raw page HTML when a reply names a tool but yields no call: shows how the site rendered it.
+        const suspicious = !parsed.calls.length && this.tools.some((t) => reply.text.includes(t.name));
+        this.emitEvent({ type: 'exchange', step, prompt: message, reply: reply.text, chatUrl: this.chatUrl, replyHtml: suspicious ? reply.html : undefined });
         if (!parsed.calls.length && !parsed.errors.length) {
           // No tool call. Accept it as the final answer only if it says "DONE:" and is grounded:
           // no sandbox paths, and no claims about files unless a tool has actually run.
           const sandbox = mentionsSandbox(reply.text);
           // The task names a drive or path that no executed tool has looked at yet.
-          const unvisited = parsed.done ? targets.filter((t) => !targetVisited(t, executedCalls)) : [];
+          const unvisited = targets.filter((t) => !targetVisited(t, executedCalls));
           if (unvisited.length && targetNudges < MAX_NUDGES) {
             targetNudges++;
             if (parsed.prose) this.emitEvent({ type: 'assistant', text: parsed.prose });
@@ -153,7 +154,7 @@ export class Agent extends EventEmitter {
           }
           if ((parsed.done && !ungrounded && !unseen.length) || nudges >= MAX_NUDGES) {
             const answer = parsed.prose || reply.text || '(no reply)';
-            this.emitEvent({ type: 'done', answer, steps: step, toolRuns, grounded: !ungrounded && !unseen.length && (parsed.done || toolRuns > 0) });
+            this.emitEvent({ type: 'done', answer, steps: step, toolRuns, grounded: parsed.done && !ungrounded && !unseen.length });
             return answer;
           }
           nudges++;

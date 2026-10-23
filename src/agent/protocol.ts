@@ -392,6 +392,11 @@ function parseBlock(body: string): ParsedCall[] | string {
 
   const lines = body.replace(/\r\n/g, '\n').split('\n');
   while (lines.length && !lines[0].trim()) lines.shift();
+  // The site's language label can leak into the block as its first line ("tool").
+  if (/^tool$/i.test(lines[0]?.trim() ?? '') && lines.length > 1) {
+    lines.shift();
+    while (lines.length && !lines[0].trim()) lines.shift();
+  }
   let first = lines.shift()!.trim();
   const named = /^(?:tool|name)\s*:\s*(\S+)$/i.exec(first);
   if (named) first = named[1];
@@ -483,6 +488,23 @@ function bareJsonObjects(text: string): string[] {
 
 const KNOWN_TOOLS = new Set(ALL_TOOLS.map((t) => t.name));
 
+/** "list_dir path: E:/ depth: 1" on one line (inside backticks or not) → calls. */
+function flattenedCalls(text: string): ParsedCall[] {
+  const calls: ParsedCall[] = [];
+  for (const tool of ALL_TOOLS) {
+    if (tool.name === 'write_file' || tool.name === 'edit_file') continue; // content needs line breaks
+    const params = Object.keys(tool.params);
+    const re = new RegExp(`(?:^|[\\s\`])${tool.name}\\s+((?:${params.join('|')})\\s*:[^\`\\n]*)`, 'g');
+    for (const m of text.matchAll(re)) {
+      const parts = m[1].split(new RegExp(`(?:^|\\s+)(${params.join('|')})\\s*:\\s*`)).slice(1);
+      const args: ToolArgs = {};
+      for (let i = 0; i + 1 < parts.length; i += 2) args[parts[i]] = coerce(parts[i], parts[i + 1].trim());
+      if (Object.keys(args).length) calls.push({ tool: tool.name, args });
+    }
+  }
+  return calls;
+}
+
 /** The tool name on the first non-empty line of a block, if that line is just a name. */
 function firstLineName(body: string): string {
   const first = body.trim().split('\n')[0]?.trim() ?? '';
@@ -556,6 +578,11 @@ function parseOnce(text: string): ParsedReply {
       }
       i = end - 1;
     }
+  }
+  // Last resort: a call whose line breaks were lost, e.g. "`list_dir path: E:/ depth: 1`". Only
+  // for tools without free-form content, split on that tool's own parameter names.
+  if (!calls.length && !errors.length) {
+    for (const call of flattenedCalls(unescapeMarkdown(text))) calls.push(call);
   }
   prose = prose.replace(/\n{3,}/g, '\n\n').trim();
   const done = !calls.length && DONE_RE.test(prose);

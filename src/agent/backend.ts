@@ -17,7 +17,7 @@ export interface ChatBackend {
     onProgress?: (text: string) => void;
     /** Where the request is (queued, sending, waiting for the reply, ...). */
     onPhase?: (phase: SendPhase) => void;
-  }): Promise<{ text: string; chatUrl?: string }>;
+  }): Promise<{ text: string; chatUrl?: string; html?: string }>;
 }
 
 /** Drives the browser in this process (desktop app, or a CLI run when no bridge is running). */
@@ -43,7 +43,7 @@ export class ProviderBackend implements ChatBackend {
       onPhase: req.onPhase,
     });
     if (result.aborted) throw new BridgeError('aborted', 'Stopped.');
-    return { text: result.text, chatUrl: result.chatUrl };
+    return { text: result.text, chatUrl: result.chatUrl, html: result.html };
   }
 }
 
