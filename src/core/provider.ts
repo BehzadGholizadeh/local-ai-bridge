@@ -306,6 +306,7 @@ export class WebChatProvider extends EventEmitter {
           this.log.warn('continued chat is empty (expired or deleted); resending earlier turns as context');
           prompt = opts.fallbackPrompt;
         }
+        await this.checkBlockingDialog(page, sel);
         const baseline = await countEach(page, sel.assistantMessage);
         const files = opts.attachments ?? [];
         if (files.length) {
@@ -334,7 +335,14 @@ export class WebChatProvider extends EventEmitter {
         await this.detectState(page, 0).catch(() => undefined);
         return { ...result, chatUrl };
       } catch (e) {
-        const err = BridgeError.from(e);
+        let err = BridgeError.from(e);
+        // A failure to type or send is often a dialog in the way: report that instead.
+        if (err.code === 'selector' && !page.isClosed()) {
+          err = await this.checkBlockingDialog(page, this.deps.getSelectors()).then(
+            () => err,
+            (dialogErr: unknown) => BridgeError.from(dialogErr),
+          );
+        }
         this.log.warn(`send failed: ${err.code}: ${err.message}`);
         if ((err.code === 'timeout' || err.code === 'selector' || err.code === 'upload_failed') && !page.isClosed()) {
           await this.saveDebugSnapshot(page, err.code);
@@ -362,6 +370,35 @@ export class WebChatProvider extends EventEmitter {
       this.log.warn(`saved page snapshot for troubleshooting: ${base}.png / .html`);
     } catch (e) {
       this.log.warn('could not save a page snapshot:', e);
+    }
+  }
+
+  /**
+   * Throws if a modal dialog blocks the chat: a sign-in wall ("Log in or sign up", shown to
+   * signed-out users after some messages) or a usage-limit notice.
+   */
+  private async checkBlockingDialog(page: Page, sel: SiteSelectors): Promise<void> {
+    const texts = await page
+      .evaluate(() =>
+        Array.from(document.querySelectorAll('[role="dialog"], [aria-modal="true"]'))
+          .filter((d) => {
+            const r = d.getBoundingClientRect();
+            return r.width > 0 && r.height > 0 && getComputedStyle(d).visibility !== 'hidden';
+          })
+          .map((d) => (d as HTMLElement).innerText.slice(0, 500)),
+      )
+      .catch(() => [] as string[]);
+    for (const text of texts) {
+      const lower = text.toLowerCase();
+      if (sel.rateLimitPatterns.some((p) => lower.includes(p.toLowerCase()))) {
+        throw new BridgeError('rate_limited', `${this.name} usage limit: "${text.replace(/\s+/g, ' ').slice(0, 160)}"`);
+      }
+      if (sel.loginWallPatterns.some((p) => lower.includes(p.toLowerCase()))) {
+        throw new BridgeError(
+          'logged_out',
+          `${this.name} is asking you to sign in before it continues (signed-out use is limited). Click "Log in" in the app.`,
+        );
+      }
     }
   }
 
@@ -693,16 +730,21 @@ function composerLength(input: Locator): Promise<number> {
  */
 async function submit(page: Page, sel: SiteSelectors, input: Locator, waitMs = 5_000, requireButton = false): Promise<boolean> {
   const typed = await composerLength(input);
+  const startUrl = page.url();
+  const baseline = await countEach(page, sel.assistantMessage);
+  // Evidence that the message really left: the box we typed into was emptied (and is still on
+  // the page), a stop button or a new reply appeared, or a new conversation URL. "Some visible
+  // empty composer" is NOT evidence: a hidden composer plus another empty editor fooled that.
   const sent = async (ms: number) => {
     const deadline = Date.now() + ms;
     do {
-      // With text typed, only an emptied message box counts; without text (attachments only), a
-      // visible stop button does.
-      // The composer may be re-created after sending, so look it up again each time.
       if (typed > 0) {
-        const box = await findVisible(page, sel.input, 0);
-        if (box && (await composerLength(box)) < typed / 2) return true;
-      } else if (await findVisible(page, sel.stopButton, 0)) return true;
+        const attached = await input.isVisible().catch(() => false);
+        if (attached && (await composerLength(input)) < typed / 2) return true;
+      }
+      if (await findVisible(page, sel.stopButton, 0)) return true;
+      if (page.url() !== startUrl && /\/(c|uc|chat)\//.test(new URL(page.url()).pathname)) return true;
+      for (const [s, n] of baseline) if ((await page.locator(s).count().catch(() => 0)) > n) return true;
       await sleep(200);
     } while (Date.now() < deadline);
     return false;
@@ -739,7 +781,11 @@ async function submit(page: Page, sel: SiteSelectors, input: Locator, waitMs = 5
     );
     if (tried && (await sent(3_000))) return true;
   }
-  throw new BridgeError('selector', 'The message was typed but could not be sent. The send button selector may be outdated, or something covers it.');
+  throw new BridgeError(
+    'selector',
+    'The message was typed but could not be sent: a dialog may be covering the message box (click "Show" to see it), ' +
+      'signed-out usage may be used up (sign in), or the send button selector is outdated.',
+  );
 }
 
 /** True if an <input accept="..."> list allows the file. Empty accept allows everything. */
