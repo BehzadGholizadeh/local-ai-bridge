@@ -29,7 +29,8 @@ export function ProviderBar({ statuses, settings, api, onAction, onTheme }: Prop
         {statuses
           .filter((s) => settings.enabledProviders[s.id])
           .map((s) => {
-            const needsLogin = s.state === 'logged_out' || s.state === 'stopped' || s.state === 'error' || s.guest;
+            const needsLogin =
+              s.state === 'logged_out' || s.state === 'stopped' || s.state === 'error' || s.state === 'challenge' || s.guest;
             return (
               <div key={s.id} className={`provider state-${s.state}`} title={s.detail ?? STATE_LABEL[s.state]}>
                 <span className="dot" />

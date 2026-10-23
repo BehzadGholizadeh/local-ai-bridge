@@ -1,4 +1,7 @@
+import { spawn, type ChildProcess } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
+import path from 'node:path';
 import { chromium, type BrowserContext, type Locator, type Page } from 'playwright-core';
 import type { BrowserChannel, ProviderId, ProviderState, ProviderStatus, Settings } from '../shared/types';
 import { BridgeError } from './errors';
@@ -59,6 +62,9 @@ export class WebChatProvider extends EventEmitter {
   private starting?: Promise<Page>;
   private mutex = new Mutex();
   private _status: ProviderStatus;
+  /** Browser channel the automation last ran with; the sign-in window uses the same browser. */
+  private channelUsed?: BrowserChannel;
+  private loginProcess?: ChildProcess;
 
   constructor(
     readonly id: ProviderId,
@@ -96,6 +102,9 @@ export class WebChatProvider extends EventEmitter {
   /** Launches the browser (if needed) and returns the chat page. */
   async start(): Promise<Page> {
     if (this.page && !this.page.isClosed()) return this.page;
+    if (this.loginProcess) {
+      throw new BridgeError('logged_out', `Finish signing in to ${this.name} and close the sign-in window first.`);
+    }
     if (!this.starting) {
       this.starting = this.launch().finally(() => {
         this.starting = undefined;
@@ -109,7 +118,8 @@ export class WebChatProvider extends EventEmitter {
     const settings = this.deps.getSettings();
     try {
       if (!this.ctx) {
-        const ctx = await launchContext(this.deps.profileDir, settings.browserChannel, this.log);
+        const { ctx, channel } = await launchContext(this.deps.profileDir, settings.browserChannel, this.log);
+        this.channelUsed = channel;
         ctx.on('close', () => {
           this.ctx = undefined;
           this.page = undefined;
@@ -160,18 +170,50 @@ export class WebChatProvider extends EventEmitter {
     if (this.page) await this.setWindowState('minimized').catch(() => undefined);
   }
 
+  /**
+   * Opens the site in a normal browser window (not controlled by Playwright) on this provider's
+   * profile. Sign-in pages often refuse automated browsers ("verify you are human" loops), so the
+   * user signs in there; when that window is closed, automation restarts with the saved session.
+   */
   async openLogin(): Promise<void> {
-    const page = await this.start();
-    if (!this.mutex.locked) {
-      const sel = this.deps.getSelectors();
-      if (!page.url().startsWith(new URL(sel.url).origin)) {
-        await page.goto(sel.url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+    if (this.loginProcess) return;
+    if (this.mutex.locked) {
+      throw new BridgeError('busy', `${this.name} is answering a message. Try again when it finishes.`);
+    }
+    const exe = findBrowserExecutable(this.deps.getSettings().browserChannel, this.channelUsed);
+    if (!exe) {
+      throw new BridgeError('browser_missing', 'No Chrome or Edge found to open the sign-in window. Install Google Chrome.');
+    }
+    // A profile can only be open in one browser at a time: let any launch finish, then close it.
+    await this.starting?.catch(() => undefined);
+    await this.stop();
+    const openedAt = Date.now();
+    const child = spawn(
+      exe,
+      [`--user-data-dir=${this.deps.profileDir}`, '--no-first-run', '--no-default-browser-check', this.deps.getSelectors().url],
+      { stdio: 'ignore' },
+    );
+    this.loginProcess = child;
+    this.log.info(`sign-in window opened (${path.basename(exe)})`);
+    this.setStatus(
+      'logged_out',
+      `Sign in to ${this.name} in the browser window that opened, then close that window. The bridge reconnects automatically.`,
+    );
+    child.on('error', (e) => {
+      this.log.warn('could not open sign-in window:', e);
+      this.setStatus('error', `Could not open the sign-in window: ${e.message}`);
+    });
+    child.on('exit', () => {
+      this.loginProcess = undefined;
+      if (Date.now() - openedAt < 3_000) {
+        // Chrome hands the URL to an existing window on the same profile and exits at once.
+        this.log.warn('sign-in window exited immediately: the profile is open in another browser window');
+        this.setStatus('error', `The ${this.name} profile is already open in another browser window. Close it and click "Log in" again.`);
+        return;
       }
-    }
-    await this.show();
-    if (this._status.state !== 'ready' || this._status.guest) {
-      this.setStatus(this._status.state, `Sign in to ${this.name} in the browser window, then come back here.`, this._status.guest);
-    }
+      this.log.info('sign-in window closed; reconnecting');
+      this.start().catch(() => undefined);
+    });
   }
 
   /** Re-reads login/challenge state from the page (skipped while a message is in flight). */
@@ -208,6 +250,11 @@ export class WebChatProvider extends EventEmitter {
         this.setStatus('ready');
       }
       return 'ready';
+    }
+    // On another site (e.g. auth.openai.com): mid sign-in, not a challenge on the chat site.
+    if (!sameOrigin(page.url(), sel.url)) {
+      this.setStatus('logged_out', `Not signed in. Click "Log in" to sign in to ${this.name}.`);
+      return 'logged_out';
     }
     if (await isChallenge(page)) {
       this.setStatus('challenge', 'Security check (Cloudflare). Click "Show" and complete it in the browser window.');
@@ -384,24 +431,24 @@ async function launchContext(
   profileDir: string,
   pref: BrowserChannel,
   log: { info: (...a: unknown[]) => void; warn: (...a: unknown[]) => void },
-): Promise<BrowserContext> {
+): Promise<{ ctx: BrowserContext; channel: BrowserChannel }> {
   // System Chrome/Edge first: they auto-update and sites trust them more than a bundled Chromium.
-  const candidates: (string | undefined)[] =
-    pref === 'auto' ? ['chrome', 'msedge', undefined] : [pref === 'chromium' ? undefined : pref];
+  const candidates: BrowserChannel[] = pref === 'auto' ? ['chrome', 'msedge', 'chromium'] : [pref];
   let lastError: unknown;
   for (const channel of candidates) {
+    const label = channel === 'chromium' ? 'bundled chromium' : channel;
     try {
       const ctx = await chromium.launchPersistentContext(profileDir, {
         headless: false,
-        channel,
+        channel: channel === 'chromium' ? undefined : channel,
         viewport: null,
         args: BROWSER_ARGS,
       });
-      log.info(`browser started (${channel ?? 'bundled chromium'})`);
-      return ctx;
+      log.info(`browser started (${label})`);
+      return { ctx, channel };
     } catch (e) {
       lastError = e;
-      log.warn(`could not start ${channel ?? 'bundled chromium'}: ${(e as Error).message.split('\n')[0]}`);
+      log.warn(`could not start ${label}: ${(e as Error).message.split('\n')[0]}`);
     }
   }
   const detail = lastError instanceof Error ? lastError.message.split('\n')[0] : String(lastError);
@@ -412,6 +459,44 @@ async function launchContext(
     'browser_missing',
     `No usable browser. Install Google Chrome or Microsoft Edge, or run "npm run install-browser". (${detail})`,
   );
+}
+
+const BROWSER_PATHS: Record<Exclude<BrowserChannel, 'auto' | 'chromium'>, () => string[]> = {
+  chrome: () =>
+    process.platform === 'win32'
+      ? [process.env.PROGRAMFILES, process.env['PROGRAMFILES(X86)'], process.env.LOCALAPPDATA]
+          .filter((b): b is string => !!b)
+          .map((b) => path.join(b, 'Google', 'Chrome', 'Application', 'chrome.exe'))
+      : process.platform === 'darwin'
+        ? ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome']
+        : ['/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/opt/google/chrome/chrome'],
+  msedge: () =>
+    process.platform === 'win32'
+      ? [process.env['PROGRAMFILES(X86)'], process.env.PROGRAMFILES]
+          .filter((b): b is string => !!b)
+          .map((b) => path.join(b, 'Microsoft', 'Edge', 'Application', 'msedge.exe'))
+      : process.platform === 'darwin'
+        ? ['/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge']
+        : ['/usr/bin/microsoft-edge', '/opt/microsoft/msedge/msedge'],
+};
+
+/** Path of the browser to open for sign-in: the one automation used, else the preferred one. */
+function findBrowserExecutable(pref: BrowserChannel, used?: BrowserChannel): string | null {
+  const order: BrowserChannel[] = used ? [used] : pref === 'auto' ? ['chrome', 'msedge', 'chromium'] : [pref];
+  for (const channel of order) {
+    const candidates = channel === 'chromium' || channel === 'auto' ? [chromium.executablePath()] : BROWSER_PATHS[channel]();
+    const found = candidates.find((p) => fs.existsSync(p));
+    if (found) return found;
+  }
+  return null;
+}
+
+function sameOrigin(a: string, b: string): boolean {
+  try {
+    return new URL(a).origin === new URL(b).origin;
+  } catch {
+    return false;
+  }
 }
 
 /** Returns the first visible element matching any selector, polling up to `timeoutMs`. */

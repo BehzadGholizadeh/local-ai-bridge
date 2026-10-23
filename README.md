@@ -93,16 +93,17 @@ No Chrome or Edge? Run `npm run install-browser` once and choose **Bundled Chrom
 ## First sign-in
 
 1. Start the app. Two minimized browser windows open in the background (one per site).
-2. In the top bar, click **Log in** next to ChatGPT. The ChatGPT window comes to the front.
+2. In the top bar, click **Log in** next to ChatGPT. The automated window closes and a **normal**
+   Chrome/Edge window opens on the same profile (sign-in pages and their "verify you are human"
+   checks often refuse automated browsers, so you sign in in an ordinary one).
 3. Sign in as you normally would (email/password, Google, Microsoft, Apple…), including any 2FA.
-4. Come back to the app. Within ~15 seconds the status turns **Ready**. Click **Hide** to minimize the window again.
+4. **Close that browser window.** The bridge restarts its automated window with your saved session,
+   and the status turns **Ready** within a few seconds.
 5. Repeat for Grok.
 
 Sessions are stored in the local profiles, so you only do this again when the site logs you out.
-
-> Google sign-in sometimes refuses automated browsers ("This browser or app may not be secure").
-> If that happens, sign in with email + password or a passkey instead, or make sure the
-> **Browser** setting uses your installed Chrome rather than the bundled Chromium.
+If the status says the profile is already open in another window, close every window of that
+profile and click **Log in** again.
 
 ## Using the desktop app
 
@@ -276,8 +277,11 @@ npx playwright-core codegen --channel chrome https://chatgpt.com
 
 Full guide: [docs/SELECTORS.md](docs/SELECTORS.md). Please send a PR with working selectors.
 
-**Status "Needs check" (Cloudflare / "Just a moment…").** Click **Show** and complete the check
-in the browser window. Using your installed Chrome (Settings → Browser) and keeping one session
+**Sign-in keeps failing / "verify you are human" loops.** Use **Log in** (it opens a normal,
+non-automated browser window); don't sign in through **Show**.
+
+**Status "Needs check" (Cloudflare / "Just a moment…").** Click **Log in** (or **Show**) and complete
+the check in the browser window. Using your installed Chrome (Settings → Browser) and keeping one session
 per site, signed in, makes this rarer. The bridge does not try to bypass these checks.
 
 **Status "Rate limited".** You hit the site's usage cap for your plan. Wait until it resets,
