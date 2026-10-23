@@ -504,6 +504,8 @@ scripts/gen-icon.mjs     regenerates assets/icon.png
 
 ## Contributing
 
+See [docs/COMPETITORS.md](docs/COMPETITORS.md) for similar projects and the roadmap.
+
 Issues and PRs welcome, especially selector updates. Run `npm run typecheck` before opening a PR.
 
 ## License
