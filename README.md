@@ -6,6 +6,7 @@ No API keys, no cloud relay: everything runs on your machine.
 
 - Desktop app: send one message to ChatGPT, Grok, or both, and read the replies side by side as they stream in.
 - Local API: `http://127.0.0.1:8080/v1/chat/completions`, OpenAI format, with streaming.
+- MCP server: `ask_chatgpt`, `ask_grok` and `status` tools for Claude Code, Cursor and other MCP clients.
 - Sign in once in a real browser window; the session is kept in a local browser profile.
 
 > [!WARNING]
@@ -25,6 +26,7 @@ No API keys, no cloud relay: everything runs on your machine.
 - [First sign-in](#first-sign-in)
 - [Using the desktop app](#using-the-desktop-app)
 - [Using the local API](#using-the-local-api)
+- [MCP server](#mcp-server)
 - [Headless mode (no UI)](#headless-mode-no-ui)
 - [Settings](#settings)
 - [Troubleshooting](#troubleshooting)
@@ -223,6 +225,58 @@ arrives as a `data:` event followed by `[DONE]`.
 | 451  | `blocked`         | The site isn't available in your country/region                         |
 | 401  | `invalid_api_key` | Wrong bearer token                                                      |
 
+## MCP server
+
+The bridge is also a [Model Context Protocol](https://modelcontextprotocol.io) server, so agents
+can ask ChatGPT or Grok for a second opinion. It runs inside the app (or the headless server):
+keep one of them running.
+
+| Tool          | Arguments                                   | Returns                                                     |
+| ------------- | ------------------------------------------- | ----------------------------------------------------------- |
+| `ask_chatgpt` | `prompt`, optional `model`, optional `chat_url` | The reply as Markdown, plus `chat_url` to continue the chat |
+| `ask_grok`    | `prompt`, optional `chat_url`               | Same                                                        |
+| `status`      | none                                        | Ready / signed out / rate limited / needs check, per site   |
+
+Each call starts a new chat unless you pass the `chat_url` from an earlier result. Only URLs on
+chatgpt.com / grok.com are accepted as `chat_url`. The system prompt from Settings applies to new chats.
+
+**Over HTTP** (Streamable HTTP, recommended): `http://127.0.0.1:8080/mcp`
+
+```bash
+claude mcp add --transport http local-ai-bridge http://127.0.0.1:8080/mcp
+```
+
+If you set an API key, add `--header "Authorization: Bearer <key>"`.
+
+Cursor (`~/.cursor/mcp.json`) and most other clients:
+
+```json
+{
+  "mcpServers": {
+    "local-ai-bridge": { "url": "http://127.0.0.1:8080/mcp" }
+  }
+}
+```
+
+**Over stdio**, for clients that only launch commands. `dist/mcp-stdio.js` forwards to the running
+bridge and reads the port and API key from the bridge's `settings.json` (override with `--port`,
+`LAB_PORT`, `LAB_API_KEY`):
+
+```bash
+claude mcp add local-ai-bridge -- node /path/to/local-ai-bridge/dist/mcp-stdio.js
+```
+
+```json
+{
+  "mcpServers": {
+    "local-ai-bridge": { "command": "node", "args": ["/path/to/local-ai-bridge/dist/mcp-stdio.js"] }
+  }
+}
+```
+
+Replies can take a while (requests to the same site queue up). If your client times out tool
+calls, raise its limit (Claude Code: `MCP_TOOL_TIMEOUT=300000`).
+
 ## Headless mode (no UI)
 
 Runs only the API server and the browsers. It shares settings and logins with the desktop app.
@@ -321,7 +375,10 @@ src/
     bridge.ts            wires settings, history, providers, API server
     provider.ts          Playwright automation for one site (login state, send, stream)
     selectors.ts         per-site selectors + runtime override loader
-    server.ts            OpenAI-compatible HTTP API (SSE streaming)
+    server.ts            local HTTP server: security checks and routing
+    api/completion.ts    model names → provider, queued request with streaming deltas
+    api/openai.ts        OpenAI-compatible /v1 endpoints (SSE streaming)
+    api/mcp.ts           MCP server (Streamable HTTP at /mcp)
     chat.ts              app conversations, fan-out to several providers
     prompt.ts            flattens message lists into one prompt
     markdown.ts          reply HTML → Markdown
@@ -330,6 +387,7 @@ src/
   main/preload.ts        safe IPC bridge for the renderer
   renderer/              React UI (Vite)
   headless.ts            CLI entry without UI
+  mcp-stdio.ts           MCP over stdio, forwards to the running bridge
 docs/SELECTORS.md        how to fix selectors
 scripts/gen-icon.mjs     regenerates assets/icon.png
 ```

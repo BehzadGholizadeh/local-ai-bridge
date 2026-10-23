@@ -10,6 +10,7 @@ import { WebChatProvider } from './provider';
 import { SelectorStore } from './selectors';
 import { ApiServer } from './server';
 import { SettingsStore } from './settings';
+import { VERSION } from './version';
 
 const STATUS_POLL_MS = 15_000;
 
@@ -26,6 +27,7 @@ export class Bridge extends EventEmitter {
   readonly providers: Record<ProviderId, WebChatProvider>;
   readonly chat: ChatService;
   readonly api: ApiServer;
+  readonly version = VERSION;
   private poll?: NodeJS.Timeout;
 
   constructor(readonly dataDir: string) {
