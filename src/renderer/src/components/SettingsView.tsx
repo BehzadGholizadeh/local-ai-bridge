@@ -66,6 +66,18 @@ export function SettingsView({ state, onSave, onError }: Props) {
           <input id="port" type="number" min={1024} max={65535} value={draft.port} onChange={(e) => set('port', Number(e.target.value))} />
         </div>
         <div className="row">
+          <label htmlFor="ollama-port">Ollama port</label>
+          <input
+            id="ollama-port"
+            type="number"
+            min={0}
+            max={65535}
+            placeholder="off (Ollama's default is 11434)"
+            value={draft.ollamaPort || ''}
+            onChange={(e) => set('ollamaPort', Number(e.target.value) || 0)}
+          />
+        </div>
+        <div className="row">
           <label htmlFor="key">API key</label>
           <div className="inline">
             <input
@@ -91,6 +103,10 @@ export function SettingsView({ state, onSave, onError }: Props) {
         <p className="muted small-text">
           Models: <code>chatgpt</code>, <code>chatgpt/&lt;model-slug&gt;</code>, <code>grok</code>. The server only listens on
           127.0.0.1.
+        </p>
+        <p className="muted small-text">
+          MCP: <code>{state.api.url.replace(/\/v1$/, '/mcp')}</code> · Ollama clients: <code>{state.api.ollamaUrl}</code> (models{' '}
+          <code>chatgpt:latest</code>, <code>grok:latest</code>)
         </p>
         <pre className="snippet">{curl}</pre>
       </fieldset>

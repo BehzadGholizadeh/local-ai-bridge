@@ -29,6 +29,7 @@ export class Bridge extends EventEmitter {
   readonly api: ApiServer;
   readonly version = VERSION;
   private poll?: NodeJS.Timeout;
+  private started = false;
 
   constructor(readonly dataDir: string) {
     super();
@@ -67,10 +68,11 @@ export class Bridge extends EventEmitter {
   }
 
   apiInfo(): ApiInfo {
-    return { url: this.api.url, running: this.api.running, error: this.api.error };
+    return { url: this.api.url, ollamaUrl: this.api.ollamaUrl, running: this.api.running, error: this.api.error };
   }
 
   async start(): Promise<void> {
+    this.started = true;
     this.log.info(`data directory: ${this.dataDir}`);
     await this.startApi();
     const s = this.settings.get();
@@ -121,7 +123,9 @@ export class Bridge extends EventEmitter {
   }
 
   private async onSettingsChange(next: Settings, prev: Settings): Promise<void> {
-    if (next.port !== prev.port && this.api.running) {
+    // Before start() the new ports are simply used when it runs; afterwards restart the server
+    // (also when it failed to start, e.g. because the old port was taken).
+    if ((next.port !== prev.port || next.ollamaPort !== prev.ollamaPort) && this.started) {
       await this.api.stop();
       await this.startApi();
     }

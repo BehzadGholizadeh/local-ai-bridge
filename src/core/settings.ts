@@ -5,6 +5,7 @@ import { writeJsonAtomic } from './fsutil';
 
 export const DEFAULT_SETTINGS: Settings = {
   port: 8080,
+  ollamaPort: 0,
   apiKey: '',
   corsOrigins: [],
   systemPrompt: '',
@@ -24,6 +25,8 @@ function sanitize(next: Settings, prev: Settings): Settings {
   const s = { ...next };
   const port = Math.trunc(Number(s.port));
   s.port = port >= 1024 && port <= 65535 ? port : prev.port;
+  const ollamaPort = Math.trunc(Number(s.ollamaPort) || 0);
+  s.ollamaPort = ollamaPort === 0 || (ollamaPort >= 1024 && ollamaPort <= 65535) ? ollamaPort : prev.ollamaPort;
   const timeout = Math.trunc(Number(s.responseTimeoutSec));
   s.responseTimeoutSec = Math.min(3600, Math.max(30, Number.isFinite(timeout) ? timeout : prev.responseTimeoutSec));
   s.corsOrigins = (Array.isArray(s.corsOrigins) ? s.corsOrigins : []).map((o) => String(o).trim()).filter(Boolean);

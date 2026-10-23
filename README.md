@@ -6,6 +6,7 @@ No API keys, no cloud relay: everything runs on your machine.
 
 - Desktop app: send one message to ChatGPT, Grok, or both, and read the replies side by side as they stream in.
 - Local API: `http://127.0.0.1:8080/v1/chat/completions`, OpenAI format, with streaming.
+- Ollama-compatible API: `/api/chat`, `/api/generate`, `/api/tags` for Ollama-only tools.
 - MCP server: `ask_chatgpt`, `ask_grok` and `status` tools for Claude Code, Cursor and other MCP clients.
 - Sign in once in a real browser window; the session is kept in a local browser profile.
 
@@ -26,6 +27,7 @@ No API keys, no cloud relay: everything runs on your machine.
 - [First sign-in](#first-sign-in)
 - [Using the desktop app](#using-the-desktop-app)
 - [Using the local API](#using-the-local-api)
+- [Ollama-compatible API](#ollama-compatible-api)
 - [MCP server](#mcp-server)
 - [Headless mode (no UI)](#headless-mode-no-ui)
 - [Settings](#settings)
@@ -225,6 +227,29 @@ arrives as a `data:` event followed by `[DONE]`.
 | 451  | `blocked`         | The site isn't available in your country/region                         |
 | 401  | `invalid_api_key` | Wrong bearer token                                                      |
 
+## Ollama-compatible API
+
+For tools that only speak Ollama (Open WebUI, Continue's `ollama` provider, Raycast, Obsidian
+plugins…). The Ollama endpoints are always served on the main port, so set the client's Ollama URL
+to `http://127.0.0.1:8080`. For clients that insist on Ollama's default `http://localhost:11434`,
+set **Settings → Ollama port** to `11434` (only if the real Ollama isn't running on it).
+
+| Endpoint             | Notes                                                         |
+| -------------------- | ------------------------------------------------------------- |
+| `POST /api/chat`     | Streams NDJSON by default, like Ollama; `"stream": false` for one object |
+| `POST /api/generate` | `prompt` + optional `system`                                  |
+| `GET /api/tags`      | Lists `chatgpt:latest` and `grok:latest`                      |
+| `POST /api/show`     | Basic model details                                           |
+| `GET /api/version`, `GET /api/ps` | For client health checks                         |
+
+Model names: `chatgpt`, `chatgpt:latest`, `chatgpt:<model-slug>` (e.g. `chatgpt:gpt-4o`), `grok`, `grok:latest`.
+Options such as `temperature`, `num_ctx` and `keep_alive` are ignored. Pull, push, create and
+embedding endpoints aren't supported.
+
+```bash
+curl http://127.0.0.1:8080/api/chat -d '{"model":"chatgpt","messages":[{"role":"user","content":"Hello!"}]}'
+```
+
 ## MCP server
 
 The bridge is also a [Model Context Protocol](https://modelcontextprotocol.io) server, so agents
@@ -285,6 +310,7 @@ Runs only the API server and the browsers. It shares settings and logins with th
 npm run build
 npm run server                                  # API on the configured port
 node dist/headless.js --port 9000               # different port (saved to settings)
+node dist/headless.js --ollama-port 11434       # also listen on Ollama's default port (saved)
 node dist/headless.js --login chatgpt           # open the sign-in window
 node dist/headless.js --show                    # keep browser windows visible
 ```
@@ -296,6 +322,7 @@ Stored in `settings.json` in the data directory.
 | Setting                    | Default    | Notes                                                                    |
 | -------------------------- | ---------- | ------------------------------------------------------------------------ |
 | Port                       | `8080`     | API listens on 127.0.0.1 only                                            |
+| Ollama port                | off        | Extra port for Ollama clients, e.g. `11434`                              |
 | API key                    | empty      | If set, clients must send `Authorization: Bearer <key>`                  |
 | Allowed origins            | empty      | Browser origins allowed to call the API (CORS). Desktop tools need none  |
 | System prompt              | empty      | Added to the first message of every new chat, app and API                |
@@ -379,6 +406,7 @@ src/
     api/completion.ts    model names → provider, queued request with streaming deltas
     api/openai.ts        OpenAI-compatible /v1 endpoints (SSE streaming)
     api/mcp.ts           MCP server (Streamable HTTP at /mcp)
+    api/ollama.ts        Ollama-compatible /api endpoints (NDJSON streaming)
     chat.ts              app conversations, fan-out to several providers
     prompt.ts            flattens message lists into one prompt
     markdown.ts          reply HTML → Markdown

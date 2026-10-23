@@ -3,6 +3,7 @@ import type { Bridge } from './bridge';
 import { BridgeError } from './errors';
 import { checkKey, sendError, sendJson } from './api/http';
 import { handleMcp } from './api/mcp';
+import * as ollama from './api/ollama';
 import { chatCompletions, models } from './api/openai';
 
 /**
@@ -10,13 +11,14 @@ import { chatCompletions, models } from './api/openai';
  * Security checks shared by all routes live here.
  */
 export class ApiServer {
-  private server?: http.Server;
+  /** The main port first, then the optional extra Ollama port. */
+  private servers: http.Server[] = [];
   error?: string;
 
   constructor(private bridge: Bridge) {}
 
   get running(): boolean {
-    return !!this.server?.listening;
+    return !!this.servers[0]?.listening;
   }
 
   get origin(): string {
@@ -27,10 +29,39 @@ export class ApiServer {
     return `${this.origin}/v1`;
   }
 
+  /** Base URL for Ollama clients: the extra Ollama port if it is listening, else the main port. */
+  get ollamaUrl(): string {
+    const extra = this.servers[1]?.address();
+    return extra && typeof extra === 'object' ? `http://127.0.0.1:${extra.port}` : this.origin;
+  }
+
   async start(): Promise<void> {
     if (this.running) return;
-    const { port } = this.bridge.settings.get();
+    const { port, ollamaPort } = this.bridge.settings.get();
     this.error = undefined;
+    try {
+      this.servers = [await this.listen(port)];
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      this.error = code === 'EADDRINUSE' ? `Port ${port} is already in use. Pick another port in Settings.` : (e as Error).message;
+      throw e;
+    }
+    if (ollamaPort && ollamaPort !== port) {
+      try {
+        this.servers.push(await this.listen(ollamaPort));
+      } catch (e) {
+        // The main API still works; report the extra port's problem without failing.
+        const code = (e as NodeJS.ErrnoException).code;
+        this.error =
+          code === 'EADDRINUSE'
+            ? `Ollama port ${ollamaPort} is already in use (is Ollama itself running?). Ollama clients can use ${this.origin} instead.`
+            : `Ollama port ${ollamaPort}: ${(e as Error).message}`;
+        this.bridge.log.warn(this.error);
+      }
+    }
+  }
+
+  private async listen(port: number): Promise<http.Server> {
     const server = http.createServer((req, res) => {
       this.handle(req, res).catch((e) => {
         const err = BridgeError.from(e);
@@ -42,28 +73,25 @@ export class ApiServer {
     server.keepAliveTimeout = 65_000;
     // Replies can take minutes; don't let Node cut long requests off.
     server.requestTimeout = 0;
-    try {
-      await new Promise<void>((resolve, reject) => {
-        server.once('error', reject);
-        server.listen(port, '127.0.0.1', () => {
-          server.off('error', reject);
-          resolve();
-        });
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(port, '127.0.0.1', () => {
+        server.off('error', reject);
+        resolve();
       });
-    } catch (e) {
-      const code = (e as NodeJS.ErrnoException).code;
-      this.error = code === 'EADDRINUSE' ? `Port ${port} is already in use. Pick another port in Settings.` : (e as Error).message;
-      throw e;
-    }
-    this.server = server;
+    });
+    return server;
   }
 
   async stop(): Promise<void> {
-    const server = this.server;
-    this.server = undefined;
-    if (!server) return;
-    server.closeAllConnections();
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    const servers = this.servers;
+    this.servers = [];
+    await Promise.all(
+      servers.map((server) => {
+        server.closeAllConnections();
+        return new Promise<void>((resolve) => server.close(() => resolve()));
+      }),
+    );
   }
 
   private async handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -106,6 +134,15 @@ export class ApiServer {
     }
 
     if (route === '/mcp') return handleMcp(this.bridge, req, res);
+    if (route.startsWith('/api/')) {
+      if (req.method === 'GET' && route === '/api/version') return ollama.version(res);
+      if (req.method === 'GET' && route === '/api/tags') return ollama.tags(this.bridge, res);
+      if (req.method === 'GET' && route === '/api/ps') return ollama.ps(res);
+      if (req.method === 'POST' && route === '/api/show') return ollama.show(this.bridge, req, res);
+      if (req.method === 'POST' && route === '/api/chat') return ollama.chat(this.bridge, req, res);
+      if (req.method === 'POST' && route === '/api/generate') return ollama.generate(this.bridge, req, res);
+      return sendJson(res, 404, { error: `${req.method} ${route} is not supported by Local AI Bridge` });
+    }
     if (req.method === 'GET' && route === '/v1/models') return models(this.bridge, res);
     if (req.method === 'GET' && route === '/v1/bridge/status') {
       return sendJson(res, 200, { api: this.bridge.apiInfo(), providers: this.bridge.statuses() });

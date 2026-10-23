@@ -32,6 +32,8 @@ export type BrowserChannel = 'auto' | 'chrome' | 'msedge' | 'chromium';
 
 export interface Settings {
   port: number;
+  /** Extra port for Ollama clients (Ollama's default is 11434). 0 = off; /api/* is always on `port`. */
+  ollamaPort: number;
   /** Optional bearer token required by the local API. Empty = no auth. */
   apiKey: string;
   /** Browser origins allowed to call the API (CORS). Empty = no browser origins. */
@@ -84,6 +86,8 @@ export interface ConversationSummary {
 
 export interface ApiInfo {
   url: string;
+  /** Base URL for Ollama clients. */
+  ollamaUrl: string;
   running: boolean;
   error?: string;
 }

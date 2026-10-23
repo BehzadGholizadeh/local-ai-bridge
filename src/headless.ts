@@ -14,6 +14,8 @@ async function main(): Promise<void> {
   const bridge = new Bridge(defaultDataDir());
   const port = arg('port');
   if (port) bridge.settings.update({ port: Number(port) });
+  const ollamaPort = arg('ollama-port');
+  if (ollamaPort) bridge.settings.update({ ollamaPort: Number(ollamaPort) });
   if (process.argv.includes('--show')) bridge.settings.update({ showBrowsers: true });
 
   bridge.on('status', (s) => {
@@ -31,7 +33,10 @@ async function main(): Promise<void> {
   const info = bridge.apiInfo();
   if (info.running) {
     console.log(`\nOpenAI-compatible API: ${info.url}`);
+    console.log(`MCP server:            ${info.url.replace(/\/v1$/, '/mcp')}`);
+    console.log(`Ollama-compatible API: ${info.ollamaUrl}`);
     console.log(`Models: chatgpt, chatgpt/<model-slug>, grok`);
+    if (info.error) console.warn(info.error);
     console.log(`API key: ${bridge.settings.get().apiKey ? '(required, see settings.json)' : '(none)'}\n`);
   } else {
     console.error(`API not running: ${info.error}`);
