@@ -35,6 +35,8 @@ export default function App() {
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [current, setCurrent] = useState<Conversation | null>(null);
   const [view, setView] = useState<'chat' | 'settings' | 'agent'>('chat');
+  /** Task text handed from Chat to the Agent view ("Run as agent task"). */
+  const [agentPrefill, setAgentPrefill] = useState<{ text: string; at: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const currentId = useRef<string | null>(null);
 
@@ -124,7 +126,7 @@ export default function App() {
           </div>
         )}
         {/* Kept mounted so a running task and its log survive switching views. */}
-        <AgentView hidden={view !== 'agent'} settings={state.settings} onError={setError} />
+        <AgentView hidden={view !== 'agent'} settings={state.settings} onError={setError} prefill={agentPrefill} />
         {view === 'agent' ? null : view === 'settings' ? (
           <SettingsView state={state} onSave={(patch) => run(() => api.updateSettings(patch))} onError={setError} />
         ) : (
@@ -137,6 +139,10 @@ export default function App() {
             onError={setError}
             onStop={() => current && run(() => api.stop(current.id))}
             onTargetsChange={(defaultTargets) => run(() => api.updateSettings({ defaultTargets }))}
+            onRunAsAgent={(text) => {
+              setAgentPrefill({ text, at: Date.now() });
+              setView('agent');
+            }}
           />
         )}
       </main>

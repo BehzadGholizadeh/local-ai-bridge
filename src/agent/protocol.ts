@@ -60,10 +60,28 @@ function environment(root: string): string {
     `- Workspace (relative paths resolve here): ${root}`,
     `- Home folder: ${home}`,
     desktops.length ? `- Desktop folder: ${desktops.join(' or ')}` : '',
+    windowsDrives().length
+      ? `- Drives on this computer: ${windowsDrives().join(', ')} (e.g. list_dir with path E:/ ; outside the workspace I approve each access)`
+      : '',
     `- Date: ${new Date().toISOString().slice(0, 10)}`,
   ]
     .filter(Boolean)
     .join('\n');
+}
+
+let drivesCache: string[] | undefined;
+
+/** Drive letters that exist (Windows only), so "go to drive E" maps to a real path. */
+function windowsDrives(): string[] {
+  if (process.platform !== 'win32') return [];
+  drivesCache ??= 'CDEFGHIJKLMNOPQRSTUVWXYZ'.split('').filter((l) => {
+    try {
+      return fs.existsSync(`${l}:\\`);
+    } catch {
+      return false;
+    }
+  }).map((l) => `${l}:\\`);
+  return drivesCache;
 }
 
 function toolDocs(tools: Tool[]): string {

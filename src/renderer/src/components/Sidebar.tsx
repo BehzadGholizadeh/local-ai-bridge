@@ -29,8 +29,12 @@ export function Sidebar({ conversations, currentId, view, onOpen, onNew, onDelet
       <div className="brand">
         <span className="logo">⇄</span> Local AI Bridge
       </div>
-      <button className={`block ${view === 'agent' ? 'active' : ''}`} onClick={onAgent} title="Give a task to the local agent">
-        ⚙︎ Agent
+      <button
+        className={`block agent-button ${view === 'agent' ? 'active' : ''}`}
+        onClick={onAgent}
+        title="Tasks on this computer: files, folders, drives, programs"
+      >
+        ⚙︎ Agent <span className="small-text muted">works on this PC</span>
       </button>
       <button className="primary block" onClick={onNew}>
         + New chat

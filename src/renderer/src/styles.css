@@ -546,6 +546,25 @@ code {
 }
 
 /* agent */
+.agent-hint {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  border: 1px solid var(--warn);
+  background: color-mix(in srgb, var(--warn) 10%, var(--bg));
+}
+.agent-hint button {
+  white-space: nowrap;
+}
+.agent-button {
+  border-color: var(--accent);
+}
+
 .agent {
   display: flex;
   flex-direction: column;

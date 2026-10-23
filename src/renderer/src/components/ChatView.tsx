@@ -27,6 +27,21 @@ interface Props {
   onError: (message: string) => void;
   onStop: () => void;
   onTargetsChange: (targets: ProviderId[]) => void;
+  /** Moves the text to the Agent view (Chat has no access to this computer). */
+  onRunAsAgent: (text: string) => void;
+}
+
+/**
+ * Messages that ask for something on this computer (files, folders, drives, programs). Chat only
+ * talks to ChatGPT/Grok, which answer from their own sandbox, so these belong in the Agent.
+ */
+export function looksLikeComputerTask(text: string): boolean {
+  const t = text.toLowerCase();
+  return (
+    /\b[a-z]:[\\/]|\bdrive\s+["']?[a-z]["']?(?=$|[\s:.,!?])|(^|\s)["']?[a-z]:?["']?\s+drive\b/.test(t) ||
+    /\b(my|this|the)\s+(desktop|computer|pc|laptop|disk|drive|downloads|documents)\b/.test(t) ||
+    /\b(list|show|open|read|edit|rename|delete|move|copy|create|find|search|run|execute|install)\b[^.?!]{0,40}\b(files?|folders?|director(y|ies)|drive|workspace|\.(txt|md|py|csv|xlsx|docx|pptx|pdf))\b/.test(t)
+  );
 }
 
 interface Turn {
@@ -43,7 +58,17 @@ function toTurns(messages: ChatMessage[]): Turn[] {
   return turns;
 }
 
-export function ChatView({ conversation, settings, statuses, apiUrl, onSend, onError, onStop, onTargetsChange }: Props) {
+export function ChatView({
+  conversation,
+  settings,
+  statuses,
+  apiUrl,
+  onSend,
+  onError,
+  onStop,
+  onTargetsChange,
+  onRunAsAgent,
+}: Props) {
   const [text, setText] = useState('');
   const [files, setFiles] = useState<File[]>([]);
   const [dragging, setDragging] = useState(false);
@@ -147,6 +172,23 @@ export function ChatView({ conversation, settings, statuses, apiUrl, onSend, onE
           addFiles(e.dataTransfer.files);
         }}
       >
+        {looksLikeComputerTask(text) && (
+          <div className="agent-hint" role="note">
+            <span>
+              <strong>This looks like a task on your computer.</strong> Chat only talks to ChatGPT/Grok, which can't see your files
+              or drives (they answer from their own sandbox). The Agent can.
+            </span>
+            <button
+              className="primary small"
+              onClick={() => {
+                onRunAsAgent(text);
+                setText('');
+              }}
+            >
+              Run as agent task →
+            </button>
+          </div>
+        )}
         <div className="targets">
           {enabled.map((id) => (
             <button
@@ -263,6 +305,10 @@ function Welcome({ statuses, apiUrl }: { statuses: ProviderStatus[]; apiUrl: str
           sign in in the browser window that opens, then come back here.
         </div>
       )}
+      <div className="card">
+        <strong>Chat vs Agent.</strong> Chat is a normal conversation: ChatGPT and Grok can't see or change anything on this
+        computer here. To work with your files, folders or drives, use <strong>Agent</strong> in the sidebar.
+      </div>
       <div className="card">
         <strong>Use it from other tools.</strong> Point any OpenAI-compatible client at <code>{apiUrl}</code> with model{' '}
         <code>chatgpt</code> or <code>grok</code> (any API key unless you set one in Settings).

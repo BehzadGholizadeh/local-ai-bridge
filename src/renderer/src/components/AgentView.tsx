@@ -127,9 +127,11 @@ interface Props {
   hidden: boolean;
   settings: Settings;
   onError: (message: string) => void;
+  /** Task text moved over from Chat; 'at' changes each time so the same text can be sent twice. */
+  prefill?: { text: string; at: number } | null;
 }
 
-export function AgentView({ hidden, settings, onError }: Props) {
+export function AgentView({ hidden, settings, onError, prefill }: Props) {
   const enabled = PROVIDER_IDS.filter((id) => settings.enabledProviders[id]);
   const [workspace, setWorkspace] = useState(store.get('workspace') ?? '');
   const [provider, setProvider] = useState<ProviderId>((store.get('provider') as ProviderId) || 'chatgpt');
@@ -142,6 +144,10 @@ export function AgentView({ hidden, settings, onError }: Props) {
   const sessionId = useRef<string | null>(null);
   const awaitingSession = useRef(false);
   const scroller = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (prefill?.text) setTask(prefill.text);
+  }, [prefill]);
 
   useEffect(() => {
     if (!workspace) void window.bridge.agentDefaults().then((d) => setWorkspace(d.workspace));
