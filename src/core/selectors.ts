@@ -30,6 +30,8 @@ export interface SiteSelectors {
   fileInput: string[];
   /** Case-insensitive phrases that indicate a usage limit when no reply arrives. */
   rateLimitPatterns: string[];
+  /** Case-insensitive phrases of a "sign in to continue" wall shown instead of a reply. */
+  loginWallPatterns: string[];
   /** A reply is complete once the stop button is gone and the text is unchanged for this long. */
   stableMs: number;
 }
@@ -67,6 +69,7 @@ export const DEFAULT_SELECTORS: Record<ProviderId, SiteSelectors> = {
       'too many requests',
       'rate limit',
     ],
+    loginWallPatterns: ['log in to continue', 'sign up to continue', 'log in or sign up'],
     stableMs: 1500,
   },
   grok: {
@@ -84,6 +87,7 @@ export const DEFAULT_SELECTORS: Record<ProviderId, SiteSelectors> = {
     loggedOutMarkers: ['a[href*="sign-in"]', 'a[href*="accounts.x.ai"]', 'button:has-text("Sign in")'],
     fileInput: ['input[type="file"]'],
     rateLimitPatterns: ['message limit', 'reached your limit', 'rate limit', 'too many requests', 'upgrade to supergrok'],
+    loginWallPatterns: ['sign up to continue', 'sign in to continue', 'continue your conversation'],
     stableMs: 1500,
   },
 };

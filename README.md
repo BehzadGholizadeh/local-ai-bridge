@@ -30,7 +30,7 @@ No API keys, no cloud relay: everything runs on your machine.
 - [Ollama-compatible API](#ollama-compatible-api)
 - [Images and files](#images-and-files)
 - [MCP server](#mcp-server)
-- [Headless mode (no UI)](#headless-mode-no-ui)
+- [Headless mode and CLI](#headless-mode-and-cli)
 - [Settings](#settings)
 - [Troubleshooting](#troubleshooting)
 - [Building installers](#building-installers)
@@ -330,18 +330,45 @@ bridge waits for the upload to finish before sending. Up to 10 files per message
 What a site accepts depends on your account: signed-out ChatGPT takes images only. Attachments from
 every message in an API request are uploaded with the new chat.
 
-## Headless mode (no UI)
+## Headless mode and CLI
 
-Runs only the API server and the browsers. It shares settings and logins with the desktop app.
+The `local-ai-bridge` command runs the bridge without the desktop UI (API, Ollama endpoints and MCP),
+the MCP stdio adapter, and the selector smoke tests. It shares settings and logins with the desktop app.
+
+From a clone, build once and use `node dist/cli.js` (or `npm link` to get a global `local-ai-bridge`):
 
 ```bash
 npm run build
-npm run server                                  # API on the configured port
-node dist/headless.js --port 9000               # different port (saved to settings)
-node dist/headless.js --ollama-port 11434       # also listen on Ollama's default port (saved)
-node dist/headless.js --login chatgpt           # open the sign-in window
-node dist/headless.js --show                    # keep browser windows visible
+node dist/cli.js serve                          # API on the configured port (also: npm run server)
+node dist/cli.js serve --port 9000              # different port (saved to settings)
+node dist/cli.js serve --ollama-port 11434      # also listen on Ollama's default port (saved)
+node dist/cli.js serve --login chatgpt          # open the sign-in window
+node dist/cli.js serve --show                   # keep browser windows visible
+node dist/cli.js mcp                            # MCP over stdio → running bridge
+node dist/cli.js smoke                          # check the selectors (see Troubleshooting)
+node dist/cli.js help
 ```
+
+Once the package is published to npm, the same commands work without cloning:
+`npx local-ai-bridge serve`, `npx local-ai-bridge mcp`, `npx local-ai-bridge smoke`. The npm package
+contains only the headless parts; it uses your installed Chrome or Edge.
+
+### Selector smoke tests
+
+`smoke` opens each site and checks that the selectors still match. By default it uses a fresh,
+signed-out temporary profile and sends nothing: it checks the page, the message box, the send button
+(by typing and clearing a word) and the file input.
+
+```bash
+node dist/cli.js smoke                          # both sites, nothing sent
+node dist/cli.js smoke --send                   # also send one short test message ("pong")
+node dist/cli.js smoke --send --profile app     # use your signed-in profiles (close the app first)
+node dist/cli.js smoke --provider grok --json   # one site, machine-readable output
+```
+
+`--send` checks the reply, stop-button and Markdown selectors end to end. A site that requires
+signing in (signed-out Grok does) is reported as a warning, not a failure; use `--profile app` to
+test with your account. The exit code is non-zero when a required check fails.
 
 ## Settings
 
@@ -376,7 +403,8 @@ treat this folder like a password).
 ## Troubleshooting
 
 **"Message box not found" / "No reply appeared" / replies cut off: selector drift.**
-The sites change their HTML regularly. Open Settings → Browsers → **Open selectors folder**,
+The sites change their HTML regularly. Run `node dist/cli.js smoke --send` to see which selector
+broke. Then open Settings → Browsers → **Open selectors folder**,
 copy `chatgpt.defaults.json` to `chatgpt.json` (or the Grok one), fix the selectors and save.
 No restart needed. Find new selectors with:
 
@@ -443,7 +471,9 @@ src/
   main/main.ts           Electron main process: window, tray, IPC
   main/preload.ts        safe IPC bridge for the renderer
   renderer/              React UI (Vite)
-  headless.ts            CLI entry without UI
+  cli.ts                 local-ai-bridge command (serve, mcp, smoke)
+  headless.ts            serve: the bridge without the desktop UI
+  smoke.ts               selector smoke tests
   mcp-stdio.ts           MCP over stdio, forwards to the running bridge
 docs/SELECTORS.md        how to fix selectors
 scripts/gen-icon.mjs     regenerates assets/icon.png

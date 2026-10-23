@@ -11,15 +11,28 @@
     "url": "https://github.com/BehzadGholizadeh/local-ai-bridge.git"
   },
   "main": "dist/main/main.js",
+  "bin": {
+    "local-ai-bridge": "dist/cli.js"
+  },
+  "files": [
+    "dist/**/*.js",
+    "!dist/main/**",
+    "!dist/renderer/**",
+    "README.md",
+    "LICENSE",
+    "docs/**"
+  ],
   "scripts": {
     "dev": "concurrently -k -n web,tsc,app -c magenta,blue,green \"vite\" \"tsc -p tsconfig.json -w --preserveWatchOutput\" \"wait-on tcp:127.0.0.1:5173 file:dist/main/main.js && electron . --dev\"",
     "build": "tsc -p tsconfig.json && vite build",
     "start": "npm run build && electron .",
-    "server": "node dist/headless.js",
+    "server": "node dist/cli.js serve",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p src/renderer/tsconfig.json",
     "install-browser": "playwright-core install chromium",
     "icon": "node scripts/gen-icon.mjs",
-    "dist": "npm run build && electron-builder"
+    "dist": "npm run build && electron-builder",
+    "smoke": "node dist/cli.js smoke",
+    "prepublishOnly": "npm run build"
   },
   "engines": {
     "node": ">=20"
@@ -81,5 +94,15 @@
   "allowScripts": {
     "electron": true,
     "electron-winstaller": false
-  }
+  },
+  "keywords": [
+    "chatgpt",
+    "grok",
+    "openai-compatible",
+    "ollama",
+    "mcp",
+    "playwright",
+    "electron",
+    "local"
+  ]
 }

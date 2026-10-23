@@ -1,33 +1,31 @@
 // Runs the bridge without the desktop UI:
-//   node dist/headless.js [--port 8080] [--login chatgpt|grok] [--show]
+//   local-ai-bridge serve [--port 8080] [--ollama-port 11434] [--login chatgpt|grok] [--show]
+//   (or: node dist/headless.js ...)
 // Shares settings and browser profiles with the desktop app.
 import { PROVIDER_IDS, type ProviderId } from './shared/types';
+import { Args } from './cliargs';
 import { Bridge } from './core/bridge';
 import { defaultDataDir } from './core/paths';
 
-function arg(name: string): string | undefined {
-  const i = process.argv.indexOf(`--${name}`);
-  return i >= 0 ? process.argv[i + 1] : undefined;
-}
-
-async function main(): Promise<void> {
+export async function runServer(argv: string[]): Promise<void> {
+  const args = new Args(argv);
   const bridge = new Bridge(defaultDataDir());
-  const port = arg('port');
+  const port = args.value('port');
   if (port) bridge.settings.update({ port: Number(port) });
-  const ollamaPort = arg('ollama-port');
+  const ollamaPort = args.value('ollama-port');
   if (ollamaPort) bridge.settings.update({ ollamaPort: Number(ollamaPort) });
-  if (process.argv.includes('--show')) bridge.settings.update({ showBrowsers: true });
+  if (args.has('show')) bridge.settings.update({ showBrowsers: true });
 
   bridge.on('status', (s) => {
     console.log(`[status] ${s.name}: ${s.state}${s.detail ? ` — ${s.detail}` : ''}`);
   });
   await bridge.start();
 
-  const login = arg('login');
+  const login = args.value('login');
   if (login) {
     if (!PROVIDER_IDS.includes(login as ProviderId)) throw new Error(`--login must be one of: ${PROVIDER_IDS.join(', ')}`);
     await bridge.providers[login as ProviderId].openLogin();
-    console.log(`Sign in to ${login} in the browser window that just opened. Press Ctrl+C when done.`);
+    console.log(`Sign in to ${login} in the browser window that just opened, then close that window.`);
   }
 
   const info = bridge.apiInfo();
@@ -54,7 +52,9 @@ async function main(): Promise<void> {
   process.on('SIGTERM', shutdown);
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+if (require.main === module) {
+  runServer(process.argv.slice(2)).catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
+}

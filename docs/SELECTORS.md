@@ -18,6 +18,16 @@ can fix this **without rebuilding the app**, by editing a JSON file.
 | Always shows "Signed out" while signed in        | `loggedOutMarkers`                       |
 | "offers no file upload here" while signed in     | `fileInput`                              |
 
+## Find out what broke
+
+```bash
+node dist/cli.js smoke --send
+```
+
+It checks each selector against the live site and prints which one no longer matches (see the
+README, "Selector smoke tests"). Add `--profile app` (with the app closed) to test with your
+signed-in account, which some checks need.
+
 ## Where the files are
 
 Settings → Browsers → **Open selectors folder**. It is `selectors/` inside the data
@@ -63,6 +73,7 @@ such as `button:has-text("Log in")`.
 | `loggedOutMarkers`  | Anything visible only when signed out (e.g. a "Log in" button)            |
 | `fileInput`         | The hidden `<input type="file">` behind the attach button; the one whose `accept` fits the files is used |
 | `rateLimitPatterns` | Lowercase phrases shown when you hit a usage limit                         |
+| `loginWallPatterns` | Lowercase phrases of a "sign in to continue" prompt shown instead of a reply |
 | `stableMs`          | How long the text must stay unchanged after the stop button disappears     |
 
 ## Finding new selectors with Playwright codegen

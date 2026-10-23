@@ -401,11 +401,17 @@ export class WebChatProvider extends EventEmitter {
         const limit = await findRateLimit(page, sel);
         if (limit) throw new BridgeError('rate_limited', `${this.name} usage limit: "${limit}"`);
         if (await isChallenge(page)) throw new BridgeError('challenge', `${this.name} is showing a security check.`);
+        if (await findPhrase(page, sel.loginWallPatterns)) {
+          throw new BridgeError('logged_out', `${this.name} asks you to sign in before it answers. Open the app and click "Log in".`);
+        }
       }
       await sleep(250);
     }
     const limit = await findRateLimit(page, sel);
     if (limit) throw new BridgeError('rate_limited', `${this.name} usage limit: "${limit}"`);
+    if (await findPhrase(page, sel.loginWallPatterns)) {
+      throw new BridgeError('logged_out', `${this.name} asks you to sign in before it answers. Open the app and click "Log in".`);
+    }
     throw new BridgeError('selector', `No reply appeared on ${this.name}. If the answer is visible in the browser, the reply selectors need updating.`);
   }
 
@@ -528,7 +534,7 @@ function sameOrigin(a: string, b: string): boolean {
 }
 
 /** Returns the first visible element matching any selector, polling up to `timeoutMs`. */
-async function findVisible(page: Page, selectors: string[], timeoutMs: number): Promise<Locator | null> {
+export async function findVisible(page: Page, selectors: string[], timeoutMs: number): Promise<Locator | null> {
   const deadline = Date.now() + timeoutMs;
   do {
     for (const s of selectors) {
@@ -638,7 +644,7 @@ async function clickStop(page: Page, sel: SiteSelectors): Promise<void> {
   if (btn) await press(btn);
 }
 
-async function isChallenge(page: Page): Promise<boolean> {
+export async function isChallenge(page: Page): Promise<boolean> {
   const title = await page.title().catch(() => '');
   if (/just a moment|attention required|verify you are human|un instant/i.test(title)) return true;
   if (page.frames().some((f) => /challenges\.cloudflare\.com/.test(f.url()))) return true;
@@ -646,19 +652,25 @@ async function isChallenge(page: Page): Promise<boolean> {
   return n > 0;
 }
 
-async function isRegionBlocked(page: Page): Promise<boolean> {
+export async function isRegionBlocked(page: Page): Promise<boolean> {
   const text = await page.evaluate(() => document.body?.innerText.slice(0, 2000) ?? '').catch(() => '');
   return /not available in your (region|country)|unsupported_country/i.test(text);
 }
 
-async function findRateLimit(page: Page, sel: SiteSelectors): Promise<string | null> {
+/** Looks for any of the phrases near the end of the page text; returns the surrounding snippet. */
+async function findPhrase(page: Page, phrases: string[]): Promise<string | null> {
+  if (!phrases.length) return null;
   const text = await page
     .evaluate(() => document.body?.innerText.slice(-4000) ?? '')
     .catch(() => '');
   const lower = text.toLowerCase();
-  for (const p of sel.rateLimitPatterns) {
+  for (const p of phrases) {
     const i = lower.indexOf(p.toLowerCase());
     if (i >= 0) return text.slice(Math.max(0, i - 40), i + 120).replace(/\s+/g, ' ').trim();
   }
   return null;
+}
+
+function findRateLimit(page: Page, sel: SiteSelectors): Promise<string | null> {
+  return findPhrase(page, sel.rateLimitPatterns);
 }

@@ -7,6 +7,11 @@ const MAX_ENTRIES = 500;
 export class Logger extends EventEmitter {
   readonly entries: LogEntry[] = [];
 
+  /** `echo: false` keeps entries (and events) without printing them to the console. */
+  constructor(private echo = true) {
+    super();
+  }
+
   info(...parts: unknown[]): void {
     this.push('info', parts);
   }
@@ -26,10 +31,11 @@ export class Logger extends EventEmitter {
     const entry: LogEntry = { t: Date.now(), level, msg };
     this.entries.push(entry);
     if (this.entries.length > MAX_ENTRIES) this.entries.splice(0, this.entries.length - MAX_ENTRIES);
+    this.emit('entry', entry);
+    if (!this.echo) return;
     const line = `[${new Date(entry.t).toISOString()}] ${level.toUpperCase()} ${msg}`;
     if (level === 'error') console.error(line);
     else if (level === 'warn') console.warn(line);
     else console.log(line);
-    this.emit('entry', entry);
   }
 }
