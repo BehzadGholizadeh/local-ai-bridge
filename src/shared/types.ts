@@ -144,6 +144,8 @@ export type AgentUiEvent =
   | { type: 'task'; text: string }
   | { type: 'thinking'; step: number }
   | { type: 'progress'; chars: number }
+  /** Where the current message to the model is: queued, opening, typing, uploading, sending, waiting, writing. */
+  | { type: 'phase'; phase: string }
   | { type: 'assistant'; text: string }
   | { type: 'tool_call'; id: string; tool: string; args: Record<string, unknown>; summary: string }
   | { type: 'tool_result'; id: string; tool: string; ok: boolean; output: string; denied?: boolean }

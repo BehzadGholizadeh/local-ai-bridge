@@ -1,6 +1,7 @@
 import type { ProviderId } from '../shared/types';
 import type { Bridge } from '../core/bridge';
 import { BridgeError } from '../core/errors';
+import type { SendPhase } from '../core/provider';
 
 /** The agent's "brain": one web chat conversation on ChatGPT or Grok. */
 export interface ChatBackend {
@@ -14,6 +15,8 @@ export interface ChatBackend {
     signal?: AbortSignal;
     /** Partial reply text while the model is writing (when the backend can stream). */
     onProgress?: (text: string) => void;
+    /** Where the request is (queued, sending, waiting for the reply, ...). */
+    onPhase?: (phase: SendPhase) => void;
   }): Promise<{ text: string; chatUrl?: string }>;
 }
 
@@ -37,6 +40,7 @@ export class ProviderBackend implements ChatBackend {
       model: req.chatUrl ? undefined : this.model,
       signal: req.signal,
       onUpdate: req.onProgress,
+      onPhase: req.onPhase,
     });
     if (result.aborted) throw new BridgeError('aborted', 'Stopped.');
     return { text: result.text, chatUrl: result.chatUrl };
@@ -76,6 +80,9 @@ export class HttpBackend implements ChatBackend {
     if (req.chatUrl) args.chat_url = req.chatUrl;
     else if (this.model && this.provider === 'chatgpt') args.model = this.model;
     let res: Response;
+    // The running bridge does the browser work; from here only "sent" and "waiting" are visible.
+    req.onPhase?.('sending');
+    const waiting = setTimeout(() => req.onPhase?.('waiting'), 1_500);
     try {
       res = await fetch(`${this.origin}/mcp`, {
         method: 'POST',
@@ -95,6 +102,8 @@ export class HttpBackend implements ChatBackend {
     } catch (e) {
       if (req.signal?.aborted) throw new BridgeError('aborted', 'Stopped.');
       throw new BridgeError('internal', `Bridge at ${this.origin} is not reachable: ${(e as Error).message}`);
+    } finally {
+      clearTimeout(waiting);
     }
     const body = (await res.json()) as {
       result?: { isError?: boolean; content?: { text?: string }[]; structuredContent?: { reply?: string; chat_url?: string } };

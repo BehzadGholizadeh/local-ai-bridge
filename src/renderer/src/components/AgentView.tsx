@@ -27,6 +27,37 @@ type Item =
   | { kind: 'error'; message: string }
   | { kind: 'note'; text: string };
 
+interface Thinking {
+  step: number;
+  chars: number;
+  phase: string;
+  since: number;
+}
+
+/** What the user sees while the agent waits on the browser: never just a spinner. */
+function phaseLabel(t: Thinking, name: string): string {
+  switch (t.phase) {
+    case 'starting':
+      return 'Starting…';
+    case 'queued':
+      return `Waiting for ${name} to finish another request…`;
+    case 'opening':
+      return `Opening ${name}…`;
+    case 'uploading':
+      return 'Uploading files…';
+    case 'typing':
+      return `Typing the message into ${name}…`;
+    case 'sending':
+      return `Sending to ${name}…`;
+    case 'waiting':
+      return `Waiting for ${name}'s reply…`;
+    case 'writing':
+      return `${name} is writing${t.chars ? ` (${t.chars} chars)` : ''}…`;
+    default:
+      return `${name} is working…`;
+  }
+}
+
 const MODE_HELP: Record<AgentMode, string> = {
   ask: 'Asks before writes, edits, shell commands and anything outside the workspace.',
   'auto-edit': 'Writes and edits inside the workspace run without asking; shell commands still ask.',
@@ -96,7 +127,8 @@ export function AgentView({ hidden, settings, onError }: Props) {
   const [task, setTask] = useState('');
   const [items, setItems] = useState<Item[]>([]);
   const [running, setRunning] = useState(false);
-  const [thinking, setThinking] = useState<{ step: number; chars: number } | null>(null);
+  const [thinking, setThinking] = useState<Thinking | null>(null);
+  const [, setTick] = useState(0);
   const sessionId = useRef<string | null>(null);
   const awaitingSession = useRef(false);
   const scroller = useRef<HTMLDivElement>(null);
@@ -113,8 +145,9 @@ export function AgentView({ hidden, settings, onError }: Props) {
           awaitingSession.current = false;
         }
         if (sid !== sessionId.current) return;
-        if (event.type === 'thinking') setThinking({ step: event.step, chars: 0 });
-        else if (event.type === 'progress') setThinking((t) => (t ? { ...t, chars: event.chars } : t));
+        if (event.type === 'thinking') setThinking({ step: event.step, chars: 0, phase: 'opening', since: Date.now() });
+        else if (event.type === 'progress') setThinking((t) => (t ? { ...t, chars: event.chars, phase: 'writing' } : t));
+        else if (event.type === 'phase') setThinking((t) => (t ? { ...t, phase: event.phase } : t));
         else if (event.type === 'idle') {
           setRunning(false);
           setThinking(null);
@@ -125,6 +158,13 @@ export function AgentView({ hidden, settings, onError }: Props) {
       }),
     [],
   );
+
+  // Tick once a second while waiting, so the elapsed time keeps moving.
+  useEffect(() => {
+    if (!thinking) return;
+    const id = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, [thinking]);
 
   useEffect(() => {
     const el = scroller.current;
@@ -138,6 +178,7 @@ export function AgentView({ hidden, settings, onError }: Props) {
     if (!text || running) return;
     if (mode === 'full-auto' && !confirm('Full-auto runs every tool, including shell commands, without asking. Continue?')) return;
     setRunning(true);
+    setThinking({ step: 1, chars: 0, phase: 'starting', since: Date.now() });
     setTask('');
     if (!sessionId.current) awaitingSession.current = true;
     try {
@@ -157,6 +198,7 @@ export function AgentView({ hidden, settings, onError }: Props) {
     } catch (e) {
       awaitingSession.current = false;
       setRunning(false);
+      setThinking(null);
       setTask(text);
       onError(e instanceof Error ? e.message : String(e));
     }
@@ -253,9 +295,12 @@ export function AgentView({ hidden, settings, onError }: Props) {
           <AgentItem key={i} item={it} onDecide={decide} />
         ))}
         {thinking && (
-          <div className="agent-thinking">
-            <span className="dot-pulse" /> {PROVIDER_NAMES[provider]} is thinking (step {thinking.step})
-            {thinking.chars ? ` · ${thinking.chars} chars` : ''}…
+          <div className="agent-thinking" role="status">
+            <span className="dot-pulse" /> {phaseLabel(thinking, PROVIDER_NAMES[provider])}
+            <span className="muted">
+              {' '}
+              · step {thinking.step} · {Math.max(0, Math.round((Date.now() - thinking.since) / 1000))}s
+            </span>
           </div>
         )}
       </div>

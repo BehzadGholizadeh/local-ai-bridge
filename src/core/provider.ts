@@ -28,7 +28,12 @@ export interface SendOptions {
   signal?: AbortSignal;
   /** Called with the full Markdown of the reply so far, whenever it changes. */
   onUpdate?: (text: string) => void;
+  /** Called as the request moves through its phases, for progress display. */
+  onPhase?: (phase: SendPhase) => void;
 }
+
+/** Where a request is: shown to the user so a long wait never looks like a hang. */
+export type SendPhase = 'queued' | 'opening' | 'typing' | 'uploading' | 'sending' | 'waiting' | 'writing';
 
 export interface SendResult {
   text: string;
@@ -282,9 +287,13 @@ export class WebChatProvider extends EventEmitter {
 
   /** Sends one prompt and resolves with the full reply. Calls queue up behind each other. */
   send(opts: SendOptions): Promise<SendResult> {
-    if (this.mutex.locked) this.log.info(`queued (${this.mutex.queued + 1} ahead)`);
+    if (this.mutex.locked) {
+      this.log.info(`queued (${this.mutex.queued + 1} ahead)`);
+      opts.onPhase?.('queued');
+    }
     return this.mutex.run(async () => {
       if (opts.signal?.aborted) throw new BridgeError('aborted', 'Request cancelled.');
+      opts.onPhase?.('opening');
       const page = await this.start();
       const sel = this.deps.getSelectors();
       const timeoutMs = this.deps.getSettings().responseTimeoutSec * 1000;
@@ -299,9 +308,14 @@ export class WebChatProvider extends EventEmitter {
         }
         const baseline = await countEach(page, sel.assistantMessage);
         const files = opts.attachments ?? [];
-        if (files.length) await this.upload(page, sel, files);
+        if (files.length) {
+          opts.onPhase?.('uploading');
+          await this.upload(page, sel, files);
+        }
+        opts.onPhase?.('typing');
         // Attachments alone are a valid message; only type when there is text.
         if (prompt.trim() || !files.length) await typePrompt(page, input, prompt);
+        opts.onPhase?.('sending');
         if (files.length) {
           // The send button stays disabled until the site has finished uploading.
           if (!(await submit(page, sel, input, 120_000, true))) {
@@ -311,6 +325,7 @@ export class WebChatProvider extends EventEmitter {
           await submit(page, sel, input);
         }
         this.log.info(`prompt sent (${prompt.length} chars)`);
+        opts.onPhase?.('waiting');
         const msgSelector = await this.waitForReply(page, sel, baseline, opts.signal);
         const result = await this.streamReply(page, sel, msgSelector, opts, timeoutMs);
         const url = page.url();
@@ -461,6 +476,7 @@ export class WebChatProvider extends EventEmitter {
         if (next !== text) {
           text = next;
           lastChange = Date.now();
+          opts.onPhase?.('writing');
           opts.onUpdate?.(text);
         }
       }

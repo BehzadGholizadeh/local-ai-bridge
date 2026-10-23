@@ -152,25 +152,60 @@ export async function runAgentCli(argv: string[]): Promise<number> {
   const permissions = new Permissions(mode, approver);
   const agent = new Agent({ backend, root, permissions, maxSteps: flags['max-steps'] ? Number(flags['max-steps']) : undefined });
 
+  // One status line while waiting on the browser, redrawn every second with the elapsed time.
   let progressShown = false;
+  const wait = { step: 0, phase: '', chars: 0, since: 0, timer: undefined as NodeJS.Timeout | undefined };
+  const name = provider === 'chatgpt' ? 'ChatGPT' : 'Grok';
+  const phaseText = (): string => {
+    switch (wait.phase) {
+      case 'queued':
+        return `waiting for ${name} to finish another request`;
+      case 'opening':
+        return `opening ${name}`;
+      case 'uploading':
+        return 'uploading files';
+      case 'typing':
+        return `typing the message into ${name}`;
+      case 'sending':
+        return `sending to ${name}`;
+      case 'waiting':
+        return `waiting for ${name}'s reply`;
+      case 'writing':
+        return `${name} is writing${wait.chars ? ` (${wait.chars} chars)` : ''}`;
+      default:
+        return `${name} is working`;
+    }
+  };
+  const drawProgress = () => {
+    const secs = Math.round((Date.now() - wait.since) / 1000);
+    process.stdout.write(`\r\x1b[K${dim(`  … ${phaseText()} · step ${wait.step} · ${secs}s`)}`);
+    progressShown = true;
+  };
   const clearProgress = () => {
     if (progressShown && tty) process.stdout.write('\r\x1b[K');
     progressShown = false;
+    clearInterval(wait.timer);
+    wait.timer = undefined;
   };
   agent.on('event', (e: AgentEvent) => {
     switch (e.type) {
       case 'thinking':
         clearProgress();
+        Object.assign(wait, { step: e.step, phase: 'opening', chars: 0, since: Date.now() });
         if (tty) {
-          process.stdout.write(dim(`  … ${backend.label} is thinking (step ${e.step})`));
-          progressShown = true;
-        } else console.log(dim(`  … thinking (step ${e.step})`));
+          drawProgress();
+          wait.timer = setInterval(drawProgress, 1000);
+        }
+        break;
+      case 'phase':
+        wait.phase = e.phase;
+        if (tty && wait.timer) drawProgress();
+        else if (!tty && e.phase !== 'writing') console.log(dim(`  … ${phaseText()}`));
         break;
       case 'progress':
-        if (tty) {
-          process.stdout.write(`\r\x1b[K${dim(`  … writing (${e.text.length} chars)`)}`);
-          progressShown = true;
-        }
+        wait.phase = 'writing';
+        wait.chars = e.text.length;
+        if (tty && wait.timer) drawProgress();
         break;
       case 'assistant':
         clearProgress();

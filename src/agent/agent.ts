@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { BridgeError } from '../core/errors';
+import type { SendPhase } from '../core/provider';
 import type { ChatBackend } from './backend';
 import type { Permissions } from './permissions';
 import {
@@ -18,6 +19,7 @@ export type AgentEvent =
   | { type: 'task'; text: string }
   | { type: 'thinking'; step: number }
   | { type: 'progress'; text: string }
+  | { type: 'phase'; phase: SendPhase }
   | { type: 'assistant'; text: string }
   | { type: 'tool_call'; id: string; tool: string; args: ToolArgs; summary: string }
   | { type: 'tool_result'; id: string; tool: string; ok: boolean; output: string; denied?: boolean }
@@ -82,6 +84,7 @@ export class Agent extends EventEmitter {
           fallbackPrompt: this.chatUrl ? this.fallback(message) : undefined,
           signal,
           onProgress: (text) => this.emitEvent({ type: 'progress', text }),
+          onPhase: (phase) => this.emitEvent({ type: 'phase', phase }),
         });
         if (reply.chatUrl) this.chatUrl = reply.chatUrl;
         this.transcript.push({ role: 'user', text: message }, { role: 'assistant', text: reply.text });
