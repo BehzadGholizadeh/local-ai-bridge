@@ -668,6 +668,28 @@ code {
   border-color: var(--border);
   background: var(--bg-2);
 }
+.agent-badge {
+  margin-left: 8px;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+.agent-badge.ran {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 40%, transparent);
+}
+.agent-badge.not-run {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+}
+.agent-note {
+  color: var(--warn);
+}
+.agent-done.ungrounded {
+  border-color: var(--warn);
+}
 .agent-done {
   border: 1px solid color-mix(in srgb, var(--ok) 45%, transparent);
   border-radius: var(--radius);

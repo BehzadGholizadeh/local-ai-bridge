@@ -3,7 +3,19 @@ import { BridgeError } from '../core/errors';
 import type { SendPhase } from '../core/provider';
 import type { ChatBackend } from './backend';
 import type { Permissions } from './permissions';
-import { followUpPrompt, initialPrompt, NUDGE, parseReply, resultsMessage, type CallResult } from './protocol';
+import {
+  followUpPrompt,
+  groundingCorrection,
+  initialPrompt,
+  mentionsFiles,
+  mentionsSandbox,
+  unseenFileNames,
+  unseenFilesCorrection,
+  NUDGE,
+  parseReply,
+  resultsMessage,
+  type CallResult,
+} from './protocol';
 import { ALL_TOOLS, truncateMiddle, validateArgs, type Tool, type ToolArgs, type ToolContext } from './tools';
 
 /** What the agent is doing, for the CLI / UI activity log. */
@@ -14,8 +26,10 @@ export type AgentEvent =
   | { type: 'phase'; phase: SendPhase }
   | { type: 'assistant'; text: string }
   | { type: 'tool_call'; id: string; tool: string; args: ToolArgs; summary: string }
-  | { type: 'tool_result'; id: string; tool: string; ok: boolean; output: string; denied?: boolean }
-  | { type: 'done'; answer: string; steps: number }
+  /** executed: the tool really ran (false when denied, invalid or unknown). */
+  | { type: 'tool_result'; id: string; tool: string; ok: boolean; output: string; denied?: boolean; executed: boolean }
+  /** toolRuns: tools that ran for this task; grounded: false if the answer is text-only about files. */
+  | { type: 'done'; answer: string; steps: number; toolRuns: number; grounded: boolean }
   /** Something the agent did on its own, e.g. re-prompting the model. */
   | { type: 'note'; text: string }
   | { type: 'error'; message: string }
@@ -68,12 +82,29 @@ export class Agent extends EventEmitter {
   /** Runs one task to completion. Resolves with the final answer; events report the progress. */
   async run(task: string, signal?: AbortSignal): Promise<string> {
     this.emitEvent({ type: 'task', text: task });
-    let message = this.started ? followUpPrompt(task) : initialPrompt(task, this.tools, this.opts.root);
-    this.started = true;
     const maxSteps = this.opts.maxSteps ?? 40;
     let nudges = 0;
     let protocolErrors = 0;
+    /** Tools that actually ran for this task (by the model, or the controller's workspace listing). */
+    let toolRuns = 0;
+    /** All tool output of this task, to check that file names in the answer were really seen. */
+    let seenOutput = '';
     try {
+      let message: string;
+      if (this.started) {
+        message = followUpPrompt(task);
+      } else {
+        // Ground the model in the real workspace before it says anything: list it here and put the
+        // listing in the first message, so it has no reason to imagine a sandbox filesystem.
+        this.emitEvent({ type: 'note', text: 'Listing the workspace first, so the model sees your real files…' });
+        const [listing] = await this.runCalls([{ tool: 'list_dir', args: { path: '.' } }], signal);
+        if (listing?.ok) {
+          toolRuns++;
+          seenOutput += listing.output;
+        }
+        message = initialPrompt(task, this.tools, this.opts.root, listing?.ok ? listing.output : undefined);
+      }
+      this.started = true;
       for (let step = 1; step <= maxSteps; step++) {
         if (signal?.aborted) throw new BridgeError('aborted', 'Stopped.');
         this.emitEvent({ type: 'thinking', step });
@@ -90,17 +121,33 @@ export class Agent extends EventEmitter {
 
         const parsed = parseReply(reply.text);
         if (!parsed.calls.length && !parsed.errors.length) {
-          // No tool call: finished only if the model says so ("DONE:"). Otherwise it probably
-          // described an action instead of requesting it (or used its own sandbox): nudge, twice at most.
-          if (parsed.done || nudges >= MAX_NUDGES) {
+          // No tool call. Accept it as the final answer only if it says "DONE:" and is grounded:
+          // no sandbox paths, and no claims about files unless a tool has actually run.
+          const sandbox = mentionsSandbox(reply.text);
+          const unseen = parsed.done ? unseenFileNames(parsed.prose, seenOutput, this.opts.root) : [];
+          const ungrounded = sandbox || (toolRuns === 0 && mentionsFiles(reply.text));
+          if (parsed.done && !ungrounded && unseen.length && nudges < MAX_NUDGES) {
+            nudges++;
+            this.emitEvent({ type: 'note', text: `The answer names files no tool ever showed (${unseen.slice(0, 3).join(', ')}): asking the model to check…` });
+            message = unseenFilesCorrection(unseen);
+            continue;
+          }
+          if ((parsed.done && !ungrounded && !unseen.length) || nudges >= MAX_NUDGES) {
             const answer = parsed.prose || reply.text || '(no reply)';
-            this.emitEvent({ type: 'done', answer, steps: step });
+            this.emitEvent({ type: 'done', answer, steps: step, toolRuns, grounded: !ungrounded && !unseen.length && (parsed.done || toolRuns > 0) });
             return answer;
           }
           nudges++;
           if (parsed.prose) this.emitEvent({ type: 'assistant', text: parsed.prose });
-          this.emitEvent({ type: 'note', text: 'No tool call and no "DONE:" in that reply: asking the model to request a tool…' });
-          message = NUDGE;
+          this.emitEvent({
+            type: 'note',
+            text: sandbox
+              ? 'The model answered from its own sandbox (paths like /mnt/data or /openai), not your computer: correcting it and asking for a real tool call…'
+              : ungrounded
+                ? 'The model talked about files without running any tool: asking for a real tool call…'
+                : 'No tool call and no "DONE:" in that reply: asking the model to request a tool…',
+          });
+          message = sandbox || ungrounded ? groundingCorrection(this.opts.root, sandbox) : NUDGE;
           continue;
         }
         if (!parsed.calls.length) {
@@ -112,6 +159,8 @@ export class Agent extends EventEmitter {
         } else protocolErrors = 0;
         if (parsed.prose) this.emitEvent({ type: 'assistant', text: parsed.prose });
         const results = await this.runCalls(parsed.calls, signal);
+        toolRuns += results.filter((r) => r.executed).length;
+        seenOutput += results.map((r) => r.output).join('\n');
         message = resultsMessage(results, parsed.errors);
       }
       const msg = `Stopped after ${maxSteps} steps without finishing. Give a follow-up task to continue.`;
@@ -136,9 +185,9 @@ export class Agent extends EventEmitter {
       const args = call.args && typeof call.args === 'object' ? call.args : {};
       const id = `call-${++this.callCounter}`;
       const tool = this.tools.find((t) => t.name === call.tool);
-      const record = (ok: boolean, output: string, wasDenied = false) => {
-        results.push({ tool: call.tool, args, ok, output: truncateMiddle(output, MAX_RESULT_CHARS) });
-        this.emitEvent({ type: 'tool_result', id, tool: call.tool, ok, output, denied: wasDenied });
+      const record = (ok: boolean, output: string, wasDenied = false, executed = false) => {
+        results.push({ tool: call.tool, args, ok, executed, output: truncateMiddle(output, MAX_RESULT_CHARS) });
+        this.emitEvent({ type: 'tool_result', id, tool: call.tool, ok, output, denied: wasDenied, executed });
       };
 
       if (!tool) {
@@ -164,7 +213,7 @@ export class Agent extends EventEmitter {
       if (signal?.aborted) throw new BridgeError('aborted', 'Stopped.');
       try {
         const r = await tool.run(args, ctx);
-        record(r.ok, r.output);
+        record(r.ok, r.output, false, true);
       } catch (e) {
         record(false, `Tool crashed: ${(e as Error).message}`);
       }

@@ -217,12 +217,20 @@ export async function runAgentCli(argv: string[]): Promise<number> {
         break;
       case 'tool_result':
         console.log(
-          e.denied ? red('  ⎿ denied') : `  ${e.ok ? green('⎿') : red('⎿ failed:')}\n${indent(e.output, e.ok ? 6 : 12)}`,
+          e.denied
+            ? red('  ⎿ not run: denied')
+            : !e.executed
+              ? `  ${red('⎿ not run:')}\n${indent(e.output, 6)}`
+              : `  ${e.ok ? green('⎿ ran on this computer') : red('⎿ ran, failed:')}\n${indent(e.output, e.ok ? 6 : 12)}`,
         );
         break;
       case 'done':
         clearProgress();
-        console.log(`\n${green('✔')} ${bold('Done')} ${dim(`(${e.steps} step${e.steps === 1 ? '' : 's'})`)}\n${e.answer}\n`);
+        console.log(
+          e.grounded
+            ? `\n${green('✔')} ${bold('Done')} ${dim(`(${e.steps} step${e.steps === 1 ? '' : 's'}, ${e.toolRuns} tool${e.toolRuns === 1 ? '' : 's'} ran on this computer)`)}\n${e.answer}\n`
+            : `\n${yellow('⚠')} ${bold('Text-only answer')} ${yellow('(not based on your real files: the model did not use the tools)')}\n${e.answer}\n`,
+        );
         break;
       case 'error':
         clearProgress();

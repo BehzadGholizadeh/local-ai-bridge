@@ -148,7 +148,7 @@ export type AgentUiEvent =
   | { type: 'phase'; phase: string }
   | { type: 'assistant'; text: string }
   | { type: 'tool_call'; id: string; tool: string; args: Record<string, unknown>; summary: string }
-  | { type: 'tool_result'; id: string; tool: string; ok: boolean; output: string; denied?: boolean }
+  | { type: 'tool_result'; id: string; tool: string; ok: boolean; output: string; denied?: boolean; executed: boolean }
   | {
       type: 'approval';
       requestId: string;
@@ -158,7 +158,7 @@ export type AgentUiEvent =
       outside: boolean;
     }
   | { type: 'approval_resolved'; requestId: string; decision: AgentDecision }
-  | { type: 'done'; answer: string; steps: number }
+  | { type: 'done'; answer: string; steps: number; toolRuns: number; grounded: boolean }
   | { type: 'note'; text: string }
   | { type: 'error'; message: string }
   | { type: 'stopped' }

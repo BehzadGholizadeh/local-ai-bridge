@@ -13,7 +13,15 @@ import { Markdown } from './Markdown';
 type Item =
   | { kind: 'task'; text: string }
   | { kind: 'assistant'; text: string }
-  | { kind: 'tool'; id: string; tool: string; summary: string; status: 'running' | 'ok' | 'failed' | 'denied'; output?: string }
+  | {
+      kind: 'tool';
+      id: string;
+      tool: string;
+      summary: string;
+      status: 'running' | 'ok' | 'failed' | 'denied';
+      executed?: boolean;
+      output?: string;
+    }
   | {
       kind: 'approval';
       requestId: string;
@@ -23,7 +31,7 @@ type Item =
       outside: boolean;
       decision?: AgentDecision;
     }
-  | { kind: 'done'; answer: string; steps: number }
+  | { kind: 'done'; answer: string; steps: number; toolRuns: number; grounded: boolean }
   | { kind: 'error'; message: string }
   | { kind: 'note'; text: string };
 
@@ -92,7 +100,7 @@ function reduce(items: Item[], e: AgentUiEvent): Item[] {
     case 'tool_result':
       return items.map((it) =>
         it.kind === 'tool' && it.id === e.id
-          ? { ...it, status: e.denied ? 'denied' : e.ok ? 'ok' : 'failed', output: e.denied ? undefined : e.output }
+          ? { ...it, status: e.denied ? 'denied' : e.ok ? 'ok' : 'failed', executed: e.executed, output: e.denied ? undefined : e.output }
           : it,
       );
     case 'approval':
@@ -103,7 +111,7 @@ function reduce(items: Item[], e: AgentUiEvent): Item[] {
     case 'approval_resolved':
       return items.map((it) => (it.kind === 'approval' && it.requestId === e.requestId ? { ...it, decision: e.decision } : it));
     case 'done':
-      return [...items, { kind: 'done', answer: e.answer, steps: e.steps }];
+      return [...items, { kind: 'done', answer: e.answer, steps: e.steps, toolRuns: e.toolRuns, grounded: e.grounded }];
     case 'error':
       return [...items, { kind: 'error', message: e.message }];
     case 'stopped':
@@ -373,11 +381,22 @@ function AgentItem({ item, onDecide }: { item: Item; onDecide: (id: string, d: A
       );
     case 'tool': {
       const icon = { running: '◌', ok: '✓', failed: '✗', denied: '⊘' }[item.status];
+      // Make it unmistakable whether something really ran on this computer.
+      const badge =
+        item.status === 'running'
+          ? 'running on this computer…'
+          : item.status === 'denied'
+            ? 'not run: denied'
+            : item.executed
+              ? item.status === 'ok'
+                ? 'ran on this computer'
+                : 'ran, failed'
+              : 'not run: invalid request';
       return (
         <details className={`agent-tool ${item.status}`} open={item.status === 'failed'}>
           <summary>
             <span className="agent-tool-icon">{icon}</span> <strong>{item.tool}</strong> <span className="muted">{item.summary}</span>
-            {item.status === 'denied' && <span className="muted"> (denied)</span>}
+            <span className={`agent-badge ${item.executed ? 'ran' : item.status === 'running' ? '' : 'not-run'}`}>{badge}</span>
           </summary>
           {item.output && <pre className="agent-pre">{item.output}</pre>}
         </details>
@@ -412,9 +431,19 @@ function AgentItem({ item, onDecide }: { item: Item; onDecide: (id: string, d: A
       );
     case 'done':
       return (
-        <div className="agent-done">
-          <div className="small-text muted">
-            ✔ Done in {item.steps} step{item.steps === 1 ? '' : 's'}
+        <div className={`agent-done ${item.grounded ? '' : 'ungrounded'}`}>
+          <div className="small-text">
+            {item.grounded ? (
+              <span className="muted">
+                ✔ Done in {item.steps} step{item.steps === 1 ? '' : 's'} · {item.toolRuns} tool{item.toolRuns === 1 ? '' : 's'} ran on this
+                computer
+              </span>
+            ) : (
+              <span className="warn-text">
+                ⚠ Text-only answer: {item.toolRuns ? 'it may describe files it never looked at' : 'no tool ran'}, so it is not based on
+                your real files.
+              </span>
+            )}
           </div>
           <Markdown text={item.answer} />
         </div>
@@ -422,6 +451,6 @@ function AgentItem({ item, onDecide }: { item: Item; onDecide: (id: string, d: A
     case 'error':
       return <div className="reply-error">{item.message}</div>;
     case 'note':
-      return <div className="muted small-text">{item.text}</div>;
+      return <div className="agent-note small-text">↻ {item.text}</div>;
   }
 }

@@ -187,6 +187,14 @@ unreadable tool blocks get specific feedback (three times at most). If the app o
 running, the CLI agent uses it over its MCP endpoint (so it can share the signed-in browser);
 otherwise it drives the browser itself (`--in-process` forces that).
 
+**Grounding.** Before the first message the agent lists the workspace itself (a real `list_dir`, shown
+in the log) and includes the result, with the rule that facts about files may only come from tool
+results. Answers are checked before they are accepted: one that describes the model's own sandbox
+(`/mnt/data`, `/openai/...`, `/workspace`), talks about files when no tool has run, or names files that
+never appeared in any tool output is sent back with a correction (and the exact `list_dir` block to
+emit). Each tool card says whether it **ran on this computer** or was not run (denied / invalid), and
+the final answer shows how many tools ran, or a warning when it is text-only.
+
 While it waits, both the app and the CLI show what it is doing: *opening ChatGPT → typing → sending
 → waiting for the reply → writing (N chars)*, with an elapsed-seconds counter.
 
