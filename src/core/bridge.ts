@@ -20,7 +20,7 @@ const STATUS_POLL_MS = 15_000;
  * the headless CLI. Emits 'status' (ProviderStatus) and 'api' (ApiInfo).
  */
 export class Bridge extends EventEmitter {
-  readonly log = new Logger();
+  readonly log: Logger;
   readonly settings: SettingsStore;
   readonly history: HistoryStore;
   readonly selectors: SelectorStore;
@@ -31,8 +31,13 @@ export class Bridge extends EventEmitter {
   private poll?: NodeJS.Timeout;
   private started = false;
 
-  constructor(readonly dataDir: string) {
+  /** `quiet` keeps log entries in memory without printing them (for the interactive CLI agent). */
+  constructor(
+    readonly dataDir: string,
+    opts: { quiet?: boolean } = {},
+  ) {
     super();
+    this.log = new Logger(!opts.quiet);
     fs.mkdirSync(dataDir, { recursive: true });
     this.settings = new SettingsStore(path.join(dataDir, 'settings.json'));
     this.history = new HistoryStore(path.join(dataDir, 'history.json'));

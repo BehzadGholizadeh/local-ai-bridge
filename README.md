@@ -8,6 +8,8 @@ No API keys, no cloud relay: everything runs on your machine.
 - Local API: `http://127.0.0.1:8080/v1/chat/completions`, OpenAI format, with streaming.
 - Ollama-compatible API: `/api/chat`, `/api/generate`, `/api/tags` for Ollama-only tools.
 - MCP server: `ask_chatgpt`, `ask_grok` and `status` tools for Claude Code, Cursor and other MCP clients.
+- **Local agent** (like Claude Code / Codex): give it a task, ChatGPT or Grok plans, and tools
+  (read/write/edit files, list folders, search, shell commands) run on your computer, with your approval.
 - Sign in once in a real browser window; the session is kept in a local browser profile.
 
 > [!WARNING]
@@ -26,6 +28,7 @@ No API keys, no cloud relay: everything runs on your machine.
 - [Install and run](#install-and-run)
 - [First sign-in](#first-sign-in)
 - [Using the desktop app](#using-the-desktop-app)
+- [Local agent](#local-agent)
 - [Using the local API](#using-the-local-api)
 - [Ollama-compatible API](#ollama-compatible-api)
 - [Images and files](#images-and-files)
@@ -121,6 +124,49 @@ profile and click **Log in** again.
 - **Show** / **Hide** bring the automated browser window forward or minimize it. ↻ restarts it.
 - The ◐ button cycles System → Light → Dark theme.
 - Closing the window keeps the app (and the API) running in the system tray. Use the tray menu → Quit to exit.
+
+## Local agent
+
+An agent in the style of Claude Code / Codex: you give it a task, ChatGPT or Grok (through your
+browser session) decides what to do, and tools run **on your computer**. It repeats
+"think → call tools → read results" until the task is done, showing each step.
+
+```bash
+node dist/cli.js agent "List the files in this folder and summarize what this project does"
+node dist/cli.js agent --cwd ~/Desktop "Open title.pptx and change the first slide's title to 'Q3 Review'"
+node dist/cli.js agent --provider grok --mode auto-edit "Rename all .jpeg files here to .jpg"
+node dist/cli.js agent          # asks for a task; after it finishes you can give follow-ups
+```
+
+**Tools:** `read_file`, `write_file`, `edit_file` (exact text replacement), `list_dir`, `search`
+(regex across files) and `bash` (PowerShell on Windows, your shell elsewhere). Office and other
+binary files are handled with scripts through `bash` (e.g. Python with python-pptx), which the agent
+checks for and can install.
+
+**Permissions.** The model's instructions can be influenced by the files and command output it
+reads, so the agent asks before it changes anything:
+
+| Mode (`--mode`)  | Runs without asking | Asks first |
+| ---------------- | ------------------- | ---------- |
+| `ask` (default)  | reading and searching inside the workspace | writes, edits, every shell command, anything outside the workspace |
+| `auto-edit`      | the above + writes and edits inside the workspace | shell commands, anything outside the workspace |
+| `full-auto`      | everything | nothing: only for tasks and folders you trust |
+
+At a prompt: `y` allows once, `a` allows that tool for the rest of the session, `n` denies (the
+model is told and must take another approach). Writes show the new content and edits show a diff
+before you decide. The workspace is `--cwd` (default: the current folder).
+
+**How it works.** The web chats have no function-calling API, so the agent uses a text protocol:
+the first message explains the tools and asks the model to call them with fenced ```` ```tool ````
+JSON blocks; the agent runs them and sends the results back as the next message in the **same**
+conversation (`src/agent/protocol.ts`, `src/agent/agent.ts`). When a reply contains no tool block,
+the task is done. If the app or `serve` is already running, the CLI agent uses it over its MCP
+endpoint (so it can share the signed-in browser); otherwise it drives the browser itself
+(`--in-process` forces that).
+
+Notes: each step is a full web-chat round trip (a few seconds), so the agent is slower than API-based
+agents; signed-out ChatGPT has a small message allowance, so sign in for real work; Ctrl+C stops the
+current task.
 
 ## Using the local API
 
@@ -435,6 +481,9 @@ selector probably matches an element that's always visible. Fix it in your overr
 
 **Browser window keeps popping up.** Turn off Settings → Show browser windows, or click **Hide**.
 
+**See what the browser saw.** When a message times out or a selector fails, the bridge saves a
+screenshot and the page HTML to `<data dir>/debug/` (the last 10 failures per site) and logs the path.
+
 **Reset everything.** Quit the app and delete the data directory (this signs you out).
 
 Logs: Settings → Logs, or the terminal when running from source.
@@ -474,6 +523,12 @@ src/
   cli.ts                 local-ai-bridge command (serve, mcp, smoke)
   headless.ts            serve: the bridge without the desktop UI
   smoke.ts               selector smoke tests
+  agent/agent.ts         agent loop: model → tool calls → permission check → results → model
+  agent/protocol.ts      system prompt, ```tool block parsing, result messages
+  agent/backend.ts       the "brain": in-process browser, or a running bridge over MCP
+  agent/permissions.ts   ask / auto-edit / full-auto approval rules
+  agent/tools/           read_file, write_file, edit_file, list_dir, search, bash
+  agent/cli.ts           local-ai-bridge agent
   mcp-stdio.ts           MCP over stdio, forwards to the running bridge
 docs/SELECTORS.md        how to fix selectors
 scripts/gen-icon.mjs     regenerates assets/icon.png

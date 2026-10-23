@@ -3,6 +3,7 @@
 import { runServer } from './headless';
 import { runMcpStdio } from './mcp-stdio';
 import { runSmoke } from './smoke';
+import { runAgentCli } from './agent/cli';
 import { VERSION } from './core/version';
 
 const HELP = `Local AI Bridge ${VERSION}: ChatGPT and Grok through your own browser sessions.
@@ -10,6 +11,8 @@ const HELP = `Local AI Bridge ${VERSION}: ChatGPT and Grok through your own brow
 Usage: local-ai-bridge <command> [options]
 
 Commands:
+  agent ["task"]   Run the local agent: ChatGPT/Grok plans, tools run on this computer
+                     (details: local-ai-bridge agent --help)
   serve            Run the bridge without the desktop app (default command)
                      --port <n>          API port (default 8080, saved to settings)
                      --ollama-port <n>   also listen for Ollama clients, e.g. 11434
@@ -34,6 +37,9 @@ async function main(): Promise<void> {
       return runServer(rest);
     case 'mcp':
       return runMcpStdio(rest);
+    case 'agent':
+      process.exitCode = await runAgentCli(rest);
+      return;
     case 'smoke':
       process.exitCode = await runSmoke(rest);
       return;
