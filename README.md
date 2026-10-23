@@ -28,6 +28,7 @@ No API keys, no cloud relay: everything runs on your machine.
 - [Using the desktop app](#using-the-desktop-app)
 - [Using the local API](#using-the-local-api)
 - [Ollama-compatible API](#ollama-compatible-api)
+- [Images and files](#images-and-files)
 - [MCP server](#mcp-server)
 - [Headless mode (no UI)](#headless-mode-no-ui)
 - [Settings](#settings)
@@ -224,6 +225,7 @@ arrives as a `data:` event followed by `[DONE]`.
 | 502  | `selector`        | The site changed, see [docs/SELECTORS.md](docs/SELECTORS.md)            |
 | 503  | `browser_missing` | Install Chrome/Edge or run `npm run install-browser`                    |
 | 503  | `disabled`        | Provider disabled in Settings                                           |
+| 502  | `upload_failed`   | The site offers no matching upload (e.g. a PDF while signed out) or the upload didn't finish |
 | 451  | `blocked`         | The site isn't available in your country/region                         |
 | 401  | `invalid_api_key` | Wrong bearer token                                                      |
 
@@ -258,8 +260,12 @@ keep one of them running.
 
 | Tool          | Arguments                                   | Returns                                                     |
 | ------------- | ------------------------------------------- | ----------------------------------------------------------- |
-| `ask_chatgpt` | `prompt`, optional `model`, optional `chat_url` | The reply as Markdown, plus `chat_url` to continue the chat |
-| `ask_grok`    | `prompt`, optional `chat_url`               | Same                                                        |
+| `ask_chatgpt` | `prompt`, optional `model`, `chat_url`, `files` | The reply as Markdown, plus `chat_url` to continue the chat |
+| `ask_grok`    | `prompt`, optional `chat_url`, `files`      | Same                                                        |
+
+`files` is a list of absolute paths of local files or images to attach. Your MCP client normally
+shows the arguments (including these paths) before running a tool call; review them, since the
+files are uploaded to the site.
 | `status`      | none                                        | Ready / signed out / rate limited / needs check, per site   |
 
 Each call starts a new chat unless you pass the `chat_url` from an earlier result. Only URLs on
@@ -301,6 +307,28 @@ claude mcp add local-ai-bridge -- node /path/to/local-ai-bridge/dist/mcp-stdio.j
 
 Replies can take a while (requests to the same site queue up). If your client times out tool
 calls, raise its limit (Claude Code: `MCP_TOOL_TIMEOUT=300000`).
+
+## Images and files
+
+Attachments are uploaded through the site's own attach button (its hidden file input), then the
+bridge waits for the upload to finish before sending. Up to 10 files per message, 25 MB each.
+
+- **Desktop app:** 📎 button, paste an image, or drag files onto the message box.
+- **OpenAI API:** `image_url` parts (data URLs, or http(s) URLs that the bridge downloads) and `file`
+  parts with `file_data`:
+
+  ```json
+  {"model": "chatgpt", "messages": [{"role": "user", "content": [
+    {"type": "text", "text": "What's in this picture?"},
+    {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0..."}}
+  ]}]}
+  ```
+
+- **Ollama API:** `images` (base64) on a message or on `/api/generate`.
+- **MCP:** the `files` argument of `ask_chatgpt` / `ask_grok`.
+
+What a site accepts depends on your account: signed-out ChatGPT takes images only. Attachments from
+every message in an API request are uploaded with the new chat.
 
 ## Headless mode (no UI)
 
@@ -409,6 +437,7 @@ src/
     api/ollama.ts        Ollama-compatible /api endpoints (NDJSON streaming)
     chat.ts              app conversations, fan-out to several providers
     prompt.ts            flattens message lists into one prompt
+    attachments.ts       images/files from API requests, MCP paths and the app (limits, MIME types)
     markdown.ts          reply HTML → Markdown
     history.ts settings.ts logger.ts errors.ts mutex.ts paths.ts
   main/main.ts           Electron main process: window, tray, IPC
@@ -431,7 +460,9 @@ scripts/gen-icon.mjs     regenerates assets/icon.png
 
 ## Limitations
 
-- Text only: image and file uploads, voice, canvas, image generation and tool calls aren't supported.
+- Voice, canvas, image generation output and tool calls aren't supported. Attachments go in, but
+  images the site generates don't come back through the API.
+- Signed-out ChatGPT only accepts image attachments; other files need you to sign in.
 - One reply at a time per provider (requests queue).
 - ChatGPT guest (signed-out) chats don't survive a browser restart. When a saved web chat turns out
   empty, the app resends the earlier turns as context, so follow-ups still work.

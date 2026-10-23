@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { PROVIDER_IDS, type ChatMessage, type Conversation, type ProviderId, type SendInput } from '../shared/types';
+import { checkCount, fromBase64, mimeFromName, type Attachment } from './attachments';
 import type { Bridge } from './bridge';
 import { BridgeError } from './errors';
 import { buildPrompt, type PromptTurn } from './prompt';
@@ -25,7 +26,12 @@ export class ChatService extends EventEmitter {
   async send(input: SendInput): Promise<{ conversationId: string }> {
     const text = input.text.trim();
     const targets = [...new Set(input.targets)].filter((t) => PROVIDER_IDS.includes(t));
-    if (!text) throw new BridgeError('bad_request', 'Message is empty.');
+    const sent = input.attachments ?? [];
+    checkCount(sent.length);
+    const attachments = sent.map((a, i) =>
+      fromBase64(Buffer.from(a.data).toString('base64'), i, a.name, a.mimeType || mimeFromName(a.name)),
+    );
+    if (!text && !attachments.length) throw new BridgeError('bad_request', 'Message is empty.');
     if (!targets.length) throw new BridgeError('bad_request', 'Pick at least one model.');
     const { history } = this.bridge;
 
@@ -34,10 +40,16 @@ export class ChatService extends EventEmitter {
     if (existing && this.running.has(existing.id)) {
       throw new BridgeError('busy', 'Wait for the current reply to finish, or stop it.');
     }
-    const conv: Conversation = existing ?? history.create(text, targets);
+    const conv: Conversation = existing ?? history.create(text || attachments.map((a) => a.name).join(', '), targets);
     const prior = conv.messages.filter((m) => m.role === 'user' || m.status === 'done');
 
-    const userMsg = history.newMessage({ role: 'user', content: text });
+    const userMsg = history.newMessage({
+      role: 'user',
+      content: text,
+      ...(attachments.length
+        ? { attachments: attachments.map((a) => ({ name: a.name, mimeType: a.mimeType, size: a.data.length })) }
+        : {}),
+    });
     this.patch(conv.id, userMsg);
 
     const ac = new AbortController();
@@ -45,7 +57,7 @@ export class ChatService extends EventEmitter {
     const jobs = targets.map((target) => {
       const msg = history.newMessage({ role: 'assistant', provider: target, content: '', status: 'streaming' });
       this.patch(conv.id, msg);
-      return this.runOne(conv, target, text, prior, msg, ac.signal);
+      return this.runOne(conv, target, text, attachments, prior, msg, ac.signal);
     });
     this.emit('history');
     void Promise.allSettled(jobs).finally(() => {
@@ -63,6 +75,7 @@ export class ChatService extends EventEmitter {
     conv: Conversation,
     target: ProviderId,
     text: string,
+    attachments: Attachment[],
     prior: ChatMessage[],
     msg: ChatMessage,
     signal: AbortSignal,
@@ -73,7 +86,9 @@ export class ChatService extends EventEmitter {
     // provider joins midway). The same text is the fallback if a saved web chat has expired.
     const turns: PromptTurn[] = prior.map((m) => ({
       role: m.role,
-      content: m.content,
+      content: m.attachments?.length
+        ? `${m.content}\n[Attached: ${m.attachments.map((a) => a.name).join(', ')}]`.trim()
+        : m.content,
       name: m.provider ? this.bridge.providers[m.provider].name : undefined,
     }));
     turns.push({ role: 'user', content: text });
@@ -86,6 +101,7 @@ export class ChatService extends EventEmitter {
         prompt: chatUrl ? text : contextPrompt,
         fallbackPrompt: contextPrompt,
         chatUrl,
+        attachments,
         model: target === 'chatgpt' && !chatUrl ? settings.chatgptModel || undefined : undefined,
         signal,
         onUpdate: (content) => {

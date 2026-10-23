@@ -1,4 +1,5 @@
 import type { ProviderId } from '../../shared/types';
+import type { Attachment } from '../attachments';
 import type { Bridge } from '../bridge';
 import { BridgeError } from '../errors';
 import type { SendResult } from '../provider';
@@ -37,6 +38,7 @@ export interface CompletionRequest {
   prompt: string;
   /** Continue this web conversation instead of opening a new chat. */
   chatUrl?: string;
+  attachments?: Attachment[];
   signal?: AbortSignal;
   /** Receives new text as it becomes stable. When set, every character is delivered exactly once. */
   onDelta?: (delta: string) => void;
@@ -55,7 +57,8 @@ export async function runCompletion(bridge: Bridge, req: CompletionRequest): Pro
     ? undefined
     : req.model.slug ?? (req.model.provider === 'chatgpt' ? settings.chatgptModel || undefined : undefined);
   bridge.log.info(
-    `${req.via} request → ${req.model.provider}${slug ? ` (${slug})` : ''}${req.chatUrl ? ' (continuing chat)' : ''}, stream=${!!req.onDelta}`,
+    `${req.via} request → ${req.model.provider}${slug ? ` (${slug})` : ''}${req.chatUrl ? ' (continuing chat)' : ''}` +
+      `${req.attachments?.length ? `, ${req.attachments.length} attachment(s)` : ''}, stream=${!!req.onDelta}`,
   );
 
   const onDelta = req.onDelta;
@@ -86,6 +89,7 @@ export async function runCompletion(bridge: Bridge, req: CompletionRequest): Pro
       prompt: req.prompt,
       chatUrl: req.chatUrl,
       model: slug,
+      attachments: req.attachments,
       signal: req.signal,
       onUpdate: onDelta ? (t) => emit(t, false) : undefined,
     });

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AppState, Conversation, ConversationSummary, MessagePatch, ProviderId } from '../../shared/types';
+import type { AppState, Conversation, ConversationSummary, MessagePatch, ProviderId, SendAttachment } from '../../shared/types';
 import { ChatView } from './components/ChatView';
 import { ProviderBar } from './components/ProviderBar';
 import { SettingsView } from './components/SettingsView';
@@ -74,9 +74,9 @@ export default function App() {
   }, []);
 
   const sendMessage = useCallback(
-    (text: string, targets: ProviderId[]) =>
+    (text: string, targets: ProviderId[], attachments: SendAttachment[]) =>
       run(async () => {
-        const { conversationId } = await api.send({ conversationId: current?.id, text, targets });
+        const { conversationId } = await api.send({ conversationId: current?.id, text, targets, attachments });
         if (conversationId !== currentId.current) {
           currentId.current = conversationId;
         }
@@ -130,6 +130,7 @@ export default function App() {
             statuses={state.statuses}
             apiUrl={state.api.url}
             onSend={sendMessage}
+            onError={setError}
             onStop={() => current && run(() => api.stop(current.id))}
             onTargetsChange={(defaultTargets) => run(() => api.updateSettings({ defaultTargets }))}
           />

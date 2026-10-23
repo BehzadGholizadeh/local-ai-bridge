@@ -26,6 +26,8 @@ export interface SiteSelectors {
   assistantContent: string[];
   /** Present when the user is not signed in. */
   loggedOutMarkers: string[];
+  /** The (usually hidden) file input behind the attach button. The best match for the files is used. */
+  fileInput: string[];
   /** Case-insensitive phrases that indicate a usage limit when no reply arrives. */
   rateLimitPatterns: string[];
   /** A reply is complete once the stop button is gone and the text is unchanged for this long. */
@@ -56,6 +58,7 @@ export const DEFAULT_SELECTORS: Record<ProviderId, SiteSelectors> = {
     assistantMessage: ['li[data-message-role="assistant"]', '[data-message-author-role="assistant"]'],
     assistantContent: ['[data-assistant-markdown-root]', '.markdown'],
     loggedOutMarkers: ['[data-testid="login-button"]', 'button:has-text("Log in")'],
+    fileInput: ['input[type="file"]'],
     rateLimitPatterns: [
       "you've reached",
       'you’ve reached',
@@ -79,6 +82,7 @@ export const DEFAULT_SELECTORS: Record<ProviderId, SiteSelectors> = {
     assistantMessage: ['div.items-start .message-bubble', '[data-testid="assistant-message"]'],
     assistantContent: ['.response-content-markdown', '.markdown'],
     loggedOutMarkers: ['a[href*="sign-in"]', 'a[href*="accounts.x.ai"]', 'button:has-text("Sign in")'],
+    fileInput: ['input[type="file"]'],
     rateLimitPatterns: ['message limit', 'reached your limit', 'rate limit', 'too many requests', 'upgrade to supergrok'],
     stableMs: 1500,
   },

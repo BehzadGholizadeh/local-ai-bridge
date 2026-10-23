@@ -16,6 +16,7 @@ can fix this **without rebuilding the app**, by editing a JSON file.
 | Replies are cut off early                        | `stopButton` (or raise `stableMs`)       |
 | Reply never "finishes" until the timeout         | `stopButton` matches something permanent |
 | Always shows "Signed out" while signed in        | `loggedOutMarkers`                       |
+| "offers no file upload here" while signed in     | `fileInput`                              |
 
 ## Where the files are
 
@@ -60,6 +61,7 @@ such as `button:has-text("Log in")`.
 | `assistantMessage`  | One element per assistant reply; the newest one is read                    |
 | `assistantContent`  | Inside a reply: the rendered Markdown body                                 |
 | `loggedOutMarkers`  | Anything visible only when signed out (e.g. a "Log in" button)            |
+| `fileInput`         | The hidden `<input type="file">` behind the attach button; the one whose `accept` fits the files is used |
 | `rateLimitPatterns` | Lowercase phrases shown when you hit a usage limit                         |
 | `stableMs`          | How long the text must stay unchanged after the stop button disappears     |
 

@@ -2,6 +2,7 @@ import type http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import type { Bridge } from '../bridge';
 import { BridgeError } from '../errors';
+import { fromOpenAiMessages } from '../attachments';
 import { buildPrompt, openAiMessagesToTurns } from '../prompt';
 import { resolveModel, runCompletion, unknownModel } from './completion';
 import { abortOnClose, estimateTokens, readJson, sendError, sendJson } from './http';
@@ -29,8 +30,11 @@ export async function chatCompletions(bridge: Bridge, req: http.IncomingMessage,
   if (!Array.isArray(body.messages) || !body.messages.length) {
     return sendError(res, new BridgeError('bad_request', '"messages" must be a non-empty array.'));
   }
+  const attachments = await fromOpenAiMessages(body.messages);
   const prompt = buildPrompt(openAiMessagesToTurns(body.messages), bridge.settings.get().systemPrompt);
-  if (!prompt.trim()) return sendError(res, new BridgeError('bad_request', 'The messages contain no text.'));
+  if (!prompt.trim() && !attachments.length) {
+    return sendError(res, new BridgeError('bad_request', 'The messages contain no text.'));
+  }
 
   const id = `chatcmpl-${randomUUID().replace(/-/g, '')}`;
   const created = Math.floor(Date.now() / 1000);
@@ -38,7 +42,7 @@ export async function chatCompletions(bridge: Bridge, req: http.IncomingMessage,
 
   if (!body.stream) {
     try {
-      const result = await runCompletion(bridge, { model, prompt, signal, via: 'openai' });
+      const result = await runCompletion(bridge, { model, prompt, attachments, signal, via: 'openai' });
       const p = estimateTokens(prompt);
       const c = estimateTokens(result.text);
       return sendJson(res, 200, {
@@ -74,7 +78,7 @@ export async function chatCompletions(bridge: Bridge, req: http.IncomingMessage,
   chunk({ role: 'assistant', content: '' });
   const keepalive = setInterval(() => res.write(': keepalive\n\n'), KEEPALIVE_MS);
   try {
-    await runCompletion(bridge, { model, prompt, signal, via: 'openai', onDelta: (content) => chunk({ content }) });
+    await runCompletion(bridge, { model, prompt, attachments, signal, via: 'openai', onDelta: (content) => chunk({ content }) });
     chunk({}, 'stop');
   } catch (e) {
     const err = BridgeError.from(e);

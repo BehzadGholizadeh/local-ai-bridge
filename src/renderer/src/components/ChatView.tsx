@@ -6,16 +6,25 @@ import {
   type Conversation,
   type ProviderId,
   type ProviderStatus,
+  type SendAttachment,
   type Settings,
 } from '../../../shared/types';
 import { Markdown } from './Markdown';
+
+// Matches the bridge's limits (src/core/attachments.ts).
+const MAX_FILES = 10;
+const MAX_FILE_BYTES = 25 * 1024 * 1024;
+
+const formatSize = (n: number) =>
+  n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${Math.round(n / 1024)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`;
 
 interface Props {
   conversation: Conversation | null;
   settings: Settings;
   statuses: ProviderStatus[];
   apiUrl: string;
-  onSend: (text: string, targets: ProviderId[]) => Promise<void>;
+  onSend: (text: string, targets: ProviderId[], attachments: SendAttachment[]) => Promise<void>;
+  onError: (message: string) => void;
   onStop: () => void;
   onTargetsChange: (targets: ProviderId[]) => void;
 }
@@ -34,9 +43,12 @@ function toTurns(messages: ChatMessage[]): Turn[] {
   return turns;
 }
 
-export function ChatView({ conversation, settings, statuses, apiUrl, onSend, onStop, onTargetsChange }: Props) {
+export function ChatView({ conversation, settings, statuses, apiUrl, onSend, onError, onStop, onTargetsChange }: Props) {
   const [text, setText] = useState('');
+  const [files, setFiles] = useState<File[]>([]);
+  const [dragging, setDragging] = useState(false);
   const [sending, setSending] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
   const enabled = PROVIDER_IDS.filter((id) => settings.enabledProviders[id]);
@@ -54,14 +66,30 @@ export function ChatView({ conversation, settings, statuses, apiUrl, onSend, onS
     if (next.length) onTargetsChange(next);
   };
 
+  const addFiles = (list: FileList | File[] | null) => {
+    const picked = Array.from(list ?? []);
+    const tooBig = picked.filter((f) => f.size > MAX_FILE_BYTES);
+    if (tooBig.length) onError(`Too large (max 25 MB): ${tooBig.map((f) => f.name).join(', ')}`);
+    const next = [...files, ...picked.filter((f) => f.size <= MAX_FILE_BYTES && f.size > 0)];
+    if (next.length > MAX_FILES) onError(`At most ${MAX_FILES} attachments per message.`);
+    setFiles(next.slice(0, MAX_FILES));
+  };
+
+  const canSend = (!!text.trim() || files.length > 0) && !sending && targets.length > 0;
+
   const submit = async () => {
-    if (!text.trim() || busy || sending || !targets.length) return;
+    if (!canSend || busy) return;
     setSending(true);
     stickToBottom.current = true;
     const value = text;
+    const picked = files;
     setText('');
+    setFiles([]);
     try {
-      await onSend(value, targets);
+      const attachments = await Promise.all(
+        picked.map(async (f) => ({ name: f.name || 'pasted-image.png', mimeType: f.type, data: new Uint8Array(await f.arrayBuffer()) })),
+      );
+      await onSend(value, targets, attachments);
     } finally {
       setSending(false);
     }
@@ -82,7 +110,18 @@ export function ChatView({ conversation, settings, statuses, apiUrl, onSend, onS
         ) : (
           turns.map((t) => (
             <div className="turn" key={t.user.id}>
-              <div className="user-msg">{t.user.content}</div>
+              <div className="user-msg">
+                {t.user.content}
+                {!!t.user.attachments?.length && (
+                  <div className="attachments">
+                    {t.user.attachments.map((a, i) => (
+                      <span key={i} className="attachment" title={`${a.mimeType}, ${formatSize(a.size)}`}>
+                        {a.mimeType.startsWith('image/') ? '🖼' : '📄'} {a.name}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
               <div className={`replies cols-${Math.min(t.replies.length, 2)}`}>
                 {t.replies.map((r) => (
                   <Reply key={r.id} msg={r} />
@@ -93,7 +132,21 @@ export function ChatView({ conversation, settings, statuses, apiUrl, onSend, onS
         )}
       </div>
 
-      <div className="composer">
+      <div
+        className={`composer ${dragging ? 'dragging' : ''}`}
+        onDragOver={(e) => {
+          if (e.dataTransfer.types.includes('Files')) {
+            e.preventDefault();
+            setDragging(true);
+          }
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragging(false);
+          addFiles(e.dataTransfer.files);
+        }}
+      >
         <div className="targets">
           {enabled.map((id) => (
             <button
@@ -110,8 +163,43 @@ export function ChatView({ conversation, settings, statuses, apiUrl, onSend, onS
             <span className="muted small-text">ChatGPT model: {settings.chatgptModel}</span>
           )}
         </div>
+        {files.length > 0 && (
+          <div className="attachments pending">
+            {files.map((f, i) => (
+              <span key={i} className="attachment" title={`${f.type || 'file'}, ${formatSize(f.size)}`}>
+                {f.type.startsWith('image/') ? '🖼' : '📄'} {f.name || 'pasted image'}
+                <button
+                  className="ghost small"
+                  aria-label={`Remove ${f.name}`}
+                  onClick={() => setFiles(files.filter((_, j) => j !== i))}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
         <div className="composer-row">
+          <input
+            ref={fileInput}
+            type="file"
+            multiple
+            hidden
+            onChange={(e) => {
+              addFiles(e.target.files);
+              e.target.value = '';
+            }}
+          />
+          <button className="attach" title="Attach files or images (or paste / drop them here)" onClick={() => fileInput.current?.click()}>
+            📎
+          </button>
           <textarea
+            onPaste={(e) => {
+              if (e.clipboardData.files.length) {
+                e.preventDefault();
+                addFiles(e.clipboardData.files);
+              }
+            }}
             value={text}
             placeholder={targets.length > 1 ? 'Message both models…' : `Message ${PROVIDER_NAMES[targets[0] ?? 'chatgpt']}…`}
             rows={Math.min(10, Math.max(2, text.split('\n').length))}
@@ -128,12 +216,14 @@ export function ChatView({ conversation, settings, statuses, apiUrl, onSend, onS
               Stop
             </button>
           ) : (
-            <button className="primary" onClick={() => void submit()} disabled={!text.trim() || sending || !targets.length}>
+            <button className="primary" onClick={() => void submit()} disabled={!canSend}>
               Send
             </button>
           )}
         </div>
-        <div className="hint muted small-text">Enter to send · Shift+Enter for a new line</div>
+        <div className="hint muted small-text">
+          Enter to send · Shift+Enter for a new line · 📎, paste or drop to attach (signed-out ChatGPT accepts images only)
+        </div>
       </div>
     </section>
   );

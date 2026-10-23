@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { chromium, type BrowserContext, type Locator, type Page } from 'playwright-core';
 import type { BrowserChannel, ProviderId, ProviderState, ProviderStatus, Settings } from '../shared/types';
+import type { Attachment } from './attachments';
 import { BridgeError } from './errors';
 import { extractReplyHtml } from './extract';
 import type { Logger } from './logger';
@@ -22,6 +23,8 @@ export interface SendOptions {
    * that expired), so it can carry the earlier turns as context.
    */
   fallbackPrompt?: string;
+  /** Files to upload with this message through the site's attach button. */
+  attachments?: Attachment[];
   signal?: AbortSignal;
   /** Called with the full Markdown of the reply so far, whenever it changes. */
   onUpdate?: (text: string) => void;
@@ -295,8 +298,18 @@ export class WebChatProvider extends EventEmitter {
           prompt = opts.fallbackPrompt;
         }
         const baseline = await countEach(page, sel.assistantMessage);
-        await typePrompt(page, input, prompt);
-        await submit(page, sel, input);
+        const files = opts.attachments ?? [];
+        if (files.length) await this.upload(page, sel, files);
+        // Attachments alone are a valid message; only type when there is text.
+        if (prompt.trim() || !files.length) await typePrompt(page, input, prompt);
+        if (files.length) {
+          // The send button stays disabled until the site has finished uploading.
+          if (!(await submit(page, sel, input, 120_000, false))) {
+            throw new BridgeError('upload_failed', `${this.name} did not finish uploading the attachments. Check the browser window (click "Show").`);
+          }
+        } else {
+          await submit(page, sel, input);
+        }
         this.log.info(`prompt sent (${prompt.length} chars)`);
         const msgSelector = await this.waitForReply(page, sel, baseline, opts.signal);
         const result = await this.streamReply(page, sel, msgSelector, opts, timeoutMs);
@@ -313,6 +326,21 @@ export class WebChatProvider extends EventEmitter {
         throw err;
       }
     });
+  }
+
+  /** Puts the files on the site's hidden file input, as if picked with the attach button. */
+  private async upload(page: Page, sel: SiteSelectors, files: Attachment[]): Promise<void> {
+    const target = await pickFileInput(page, sel.fileInput, files);
+    if (!target) {
+      throw new BridgeError(
+        'upload_failed',
+        `${this.name} offers no file upload here${this._status.guest ? ' (attachments usually need you to sign in)' : ''}.`,
+      );
+    }
+    await target.setInputFiles(files.map((f) => ({ name: f.name, mimeType: f.mimeType, buffer: f.data })));
+    this.log.info(`attached ${files.length} file(s): ${files.map((f) => `${f.name} (${f.mimeType})`).join(', ')}`);
+    // Give the site a moment to register the files and disable Send while it uploads.
+    await sleep(1_500);
   }
 
   private async navigate(page: Page, sel: SiteSelectors, opts: SendOptions): Promise<void> {
@@ -560,14 +588,49 @@ async function typePrompt(page: Page, input: Locator, prompt: string): Promise<v
   }
 }
 
-async function submit(page: Page, sel: SiteSelectors, input: Locator): Promise<void> {
-  const deadline = Date.now() + 5_000;
+/**
+ * Clicks Send once it is enabled. If it never becomes clickable within `waitMs`, presses Enter
+ * (when `enterFallback`) or returns false.
+ */
+async function submit(page: Page, sel: SiteSelectors, input: Locator, waitMs = 5_000, enterFallback = true): Promise<boolean> {
+  const deadline = Date.now() + waitMs;
   while (Date.now() < deadline) {
     const btn = await findVisible(page, sel.sendButton, 0);
-    if (btn && (await btn.isEnabled().catch(() => false)) && (await press(btn))) return;
-    await sleep(150);
+    if (btn && (await btn.isEnabled().catch(() => false)) && (await press(btn))) return true;
+    await sleep(250);
   }
+  if (!enterFallback) return false;
   await input.press('Enter');
+  return true;
+}
+
+/** True if an <input accept="..."> list allows the file. Empty accept allows everything. */
+function acceptAllows(accept: string, file: Attachment): boolean {
+  const tokens = accept.split(',').map((t) => t.trim().toLowerCase()).filter(Boolean);
+  if (!tokens.length) return true;
+  const mime = file.mimeType.toLowerCase();
+  const ext = path.extname(file.name).toLowerCase();
+  return tokens.some((t) => t === mime || t === ext || (t.endsWith('/*') && mime.startsWith(t.slice(0, -1))));
+}
+
+/** Picks the file input whose `accept` allows all files (preferring `multiple` for several files). */
+async function pickFileInput(page: Page, selectors: string[], files: Attachment[]): Promise<Locator | null> {
+  let best: { loc: Locator; score: number } | null = null;
+  for (const s of selectors) {
+    const loc = page.locator(s);
+    const n = await loc.count().catch(() => 0);
+    for (let i = 0; i < n; i++) {
+      const el = loc.nth(i);
+      const attrs = await el
+        .evaluate((e) => ({ accept: e.getAttribute('accept') ?? '', multiple: e.hasAttribute('multiple'), disabled: (e as HTMLInputElement).disabled }))
+        .catch(() => null);
+      if (!attrs || attrs.disabled || !files.every((f) => acceptAllows(attrs.accept, f))) continue;
+      const score = (files.length > 1 && attrs.multiple ? 2 : 0) + (attrs.accept ? 1 : 0);
+      if (!best || score > best.score) best = { loc: el, score };
+    }
+    if (best) break;
+  }
+  return best?.loc ?? null;
 }
 
 async function clickStop(page: Page, sel: SiteSelectors): Promise<void> {

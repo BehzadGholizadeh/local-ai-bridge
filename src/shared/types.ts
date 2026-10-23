@@ -56,11 +56,26 @@ export interface Settings {
 
 export type MessageStatus = 'streaming' | 'done' | 'error' | 'stopped';
 
+/** What history keeps about an attachment (not its contents). */
+export interface AttachmentInfo {
+  name: string;
+  mimeType: string;
+  size: number;
+}
+
+/** A file picked in the app, sent over IPC. */
+export interface SendAttachment {
+  name: string;
+  mimeType: string;
+  data: Uint8Array;
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   provider?: ProviderId;
   content: string;
+  attachments?: AttachmentInfo[];
   createdAt: number;
   status?: MessageStatus;
   error?: string;
@@ -105,6 +120,7 @@ export interface SendInput {
   conversationId?: string;
   text: string;
   targets: ProviderId[];
+  attachments?: SendAttachment[];
 }
 
 export interface MessagePatch {

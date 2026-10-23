@@ -8,6 +8,7 @@ export type ErrorCode =
   | 'browser_missing'
   | 'disabled'
   | 'blocked'
+  | 'upload_failed'
   | 'busy'
   | 'bad_request'
   | 'internal';
@@ -45,6 +46,7 @@ export const HTTP_STATUS: Record<ErrorCode, number> = {
   browser_missing: 503,
   disabled: 503,
   blocked: 451,
+  upload_failed: 502,
   busy: 409,
   bad_request: 400,
   internal: 500,

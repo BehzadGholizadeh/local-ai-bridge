@@ -1,5 +1,6 @@
 import type http from 'node:http';
 import { PROVIDER_NAMES, type ProviderId } from '../../shared/types';
+import { checkCount, fromPath, MAX_ATTACHMENTS, type Attachment } from '../attachments';
 import type { Bridge } from '../bridge';
 import { BridgeError } from '../errors';
 import { buildPrompt } from '../prompt';
@@ -40,6 +41,12 @@ const askSchema = (provider: ProviderId) => ({
       type: 'string',
       description:
         'Continue an earlier conversation: pass the chat_url returned by a previous call. Omit to start a new chat.',
+    },
+    files: {
+      type: 'array',
+      items: { type: 'string' },
+      maxItems: MAX_ATTACHMENTS,
+      description: `Absolute paths of local files or images to attach (uploaded to ${PROVIDER_NAMES[provider]}; max 25 MB each).`,
     },
   },
   required: ['prompt'],
@@ -153,6 +160,14 @@ async function callTool(bridge: Bridge, params: Record<string, unknown>, signal:
   const provider: ProviderId = name === 'ask_chatgpt' ? 'chatgpt' : 'grok';
   const prompt = typeof args.prompt === 'string' ? args.prompt.trim() : '';
   if (!prompt) return textResult('"prompt" is required.', true);
+  let attachments: Attachment[] = [];
+  try {
+    const paths = Array.isArray(args.files) ? args.files.filter((f): f is string => typeof f === 'string') : [];
+    checkCount(paths.length);
+    attachments = paths.map((p, i) => fromPath(p, i));
+  } catch (e) {
+    return textResult(BridgeError.from(e).message, true);
+  }
   const chatUrl = typeof args.chat_url === 'string' && args.chat_url.trim() ? args.chat_url.trim() : undefined;
   if (chatUrl && !isProviderUrl(bridge, provider, chatUrl)) {
     return textResult(`chat_url must be a ${PROVIDER_NAMES[provider]} conversation URL returned by an earlier call.`, true);
@@ -164,6 +179,7 @@ async function callTool(bridge: Bridge, params: Record<string, unknown>, signal:
       model: { provider, slug, id: provider },
       prompt: chatUrl ? prompt : buildPrompt([{ role: 'user', content: prompt }], bridge.settings.get().systemPrompt),
       chatUrl,
+      attachments,
       signal,
       via: 'mcp',
     });

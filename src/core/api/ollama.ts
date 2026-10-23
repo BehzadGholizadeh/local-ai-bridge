@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { PROVIDER_IDS, type ProviderId } from '../../shared/types';
 import type { Bridge } from '../bridge';
 import { BridgeError, HTTP_STATUS } from '../errors';
+import { fromOllamaImages, type Attachment } from '../attachments';
 import { buildPrompt, openAiMessagesToTurns, type PromptTurn } from '../prompt';
 import { resolveModel, runCompletion, unknownModel, type ResolvedModel } from './completion';
 import { abortOnClose, estimateTokens, readJson, sendJson } from './http';
@@ -75,7 +76,8 @@ export async function chat(bridge: Bridge, req: http.IncomingMessage, res: http.
     return ollamaError(res, new BridgeError('bad_request', '"messages" must be a non-empty array.'));
   }
   const turns = openAiMessagesToTurns(body.messages);
-  await respond(bridge, res, body, model, turns, 'chat');
+  const attachments = fromOllamaImages(body.messages.map((m) => (m as { images?: unknown } | null)?.images));
+  await respond(bridge, res, body, model, turns, attachments, 'chat');
 }
 
 /** POST /api/generate */
@@ -84,7 +86,7 @@ export async function generate(bridge: Bridge, req: http.IncomingMessage, res: h
   const model = resolveModel(body.model);
   if (!model) return ollamaError(res, unknownModel(body.model));
   const prompt = typeof body.prompt === 'string' ? body.prompt : '';
-  if (!prompt.trim()) {
+  if (!prompt.trim() && !(Array.isArray(body.images) && body.images.length)) {
     // Ollama treats an empty prompt as "load the model": answer immediately.
     return sendJson(res, 200, {
       model: String(body.model),
@@ -97,7 +99,7 @@ export async function generate(bridge: Bridge, req: http.IncomingMessage, res: h
   const turns: PromptTurn[] = [];
   if (typeof body.system === 'string' && body.system.trim()) turns.push({ role: 'system', content: body.system });
   turns.push({ role: 'user', content: prompt });
-  await respond(bridge, res, body, model, turns, 'generate');
+  await respond(bridge, res, body, model, turns, fromOllamaImages([body.images]), 'generate');
 }
 
 async function respond(
@@ -106,10 +108,13 @@ async function respond(
   body: Record<string, unknown>,
   model: ResolvedModel,
   turns: PromptTurn[],
+  attachments: Attachment[],
   kind: 'chat' | 'generate',
 ): Promise<void> {
   const prompt = buildPrompt(turns, bridge.settings.get().systemPrompt);
-  if (!prompt.trim()) return ollamaError(res, new BridgeError('bad_request', 'The messages contain no text.'));
+  if (!prompt.trim() && !attachments.length) {
+    return ollamaError(res, new BridgeError('bad_request', 'The messages contain no text.'));
+  }
   const name = String(body.model);
   const started = process.hrtime.bigint();
   const signal = abortOnClose(res);
@@ -136,7 +141,7 @@ async function respond(
 
   if (!stream) {
     try {
-      const result = await runCompletion(bridge, { model, prompt, signal, via: 'ollama' });
+      const result = await runCompletion(bridge, { model, prompt, attachments, signal, via: 'ollama' });
       return sendJson(res, 200, final(result.text));
     } catch (e) {
       return ollamaError(res, BridgeError.from(e));
@@ -152,6 +157,7 @@ async function respond(
       prompt,
       signal,
       via: 'ollama',
+      attachments,
       onDelta: (delta) => {
         full += delta;
         line(piece(delta, false));
