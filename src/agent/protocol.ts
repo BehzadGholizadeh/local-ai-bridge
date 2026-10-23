@@ -225,10 +225,20 @@ export function mentionsFiles(text: string): boolean {
  */
 export function unseenFileNames(answer: string, seen: string, root: string): string[] {
   const withoutUrls = answer.replace(/https?:\/\/\S+/g, ' ');
-  const names = withoutUrls.match(/[\w-]+(?:\.[\w-]+)*\.[a-z][a-z0-9]{0,5}\b/gi) ?? [];
+  const names: string[] = [...(withoutUrls.match(/[\w-]+(?:\.[\w-]+)*\.[a-z][a-z0-9]{0,5}\b/gi) ?? [])];
+  // Folder names have no extension: take names the answer presents as entries, i.e. in `backticks`
+  // or as the whole text of a list item ("- Projects", "1. **TempModels/**").
+  for (const m of withoutUrls.matchAll(/`([^`\n]{1,80})`/g)) names.push(m[1].trim());
+  for (const m of withoutUrls.matchAll(/^\s*(?:[-*+]|\d+[.)])\s+(.{1,60})$/gm)) {
+    const item = m[1].replace(/[*_`]/g, '').replace(/\s+[-–—(].*$/, '').trim();
+    if (item && item.split(/\s+/).length <= 4) names.push(item);
+  }
   const lowerSeen = seen.toLowerCase();
-  return [...new Set(names)].filter((name) => {
-    if (/^(e\.g|i\.e|etc|vs|www\.)/i.test(name) || /\.(com|org|net|io|ai|dev)$/i.test(name)) return false;
+  return [...new Set(names.map((n) => n.replace(/[\\/]+$/, '')))].filter((name) => {
+    if (!name || /^(e\.g|i\.e|etc|vs|www\.)/i.test(name) || /\.(com|org|net|io|ai|dev)$/i.test(name)) return false;
+    // Commands, sentences and numbers shown in backticks aren't entries.
+    if (/[\s=|;]/.test(name) && !/^[\w .$()&'-]+$/.test(name)) return false;
+    if (/^\d+([.,]\d+)?$/.test(name) || name.length < 2) return false;
     if (lowerSeen.includes(name.toLowerCase())) return false;
     try {
       return !fs.existsSync(path.resolve(root, name));
@@ -236,6 +246,43 @@ export function unseenFileNames(answer: string, seen: string, root: string): str
       return true;
     }
   });
+}
+
+/**
+ * Places the task explicitly names: drive letters ("drive E", "E:") and absolute paths. A final
+ * answer is only accepted once a tool has actually looked at each of them.
+ */
+export function taskTargets(task: string): string[] {
+  const targets = new Set<string>();
+  for (const m of task.matchAll(/\b([a-z]):[\\/][^\s"'<>|?*]*/gi)) targets.add(m[0].replace(/[\\/]+$/, '').replace(/\//g, '\\') || `${m[1]}:`);
+  for (const m of task.matchAll(/\bdrive\s+["']?([a-z])["']?(?=$|[\s:.,!?])|(?:^|\s)["']?([a-z]):?["']?\s+drive\b/gi)) {
+    targets.add(`${(m[1] ?? m[2]).toUpperCase()}:`);
+  }
+  for (const m of task.matchAll(/(?:^|\s)([a-z]):(?=$|[\s.,!?])/gi)) targets.add(`${m[1].toUpperCase()}:`);
+  return [...targets];
+}
+
+/** Whether any executed tool call's arguments point at (or inside) the target path. */
+export function targetVisited(target: string, calls: { args: ToolArgs }[]): boolean {
+  const t = target.toLowerCase().replace(/\//g, '\\');
+  return calls.some((c) =>
+    Object.values(c.args ?? {}).some((v) => {
+      if (typeof v !== 'string') return false;
+      const s = v.toLowerCase().replace(/\//g, '\\');
+      return s === t || s.startsWith(t.endsWith('\\') ? t : `${t}\\`) || s.startsWith(t) || s.includes(` ${t}`) || s.includes(`'${t}`) || s.includes(`"${t}`);
+    }),
+  );
+}
+
+/** Sent when the model finishes without having looked at a place the task names. */
+export function unvisitedTargetCorrection(targets: string[]): string {
+  const first = targets[0].length === 2 ? `${targets[0]}/` : targets[0].replace(/\\/g, '/');
+  return `You have not looked at ${targets.join(', ')} yet: no tool has run there, so your answer cannot be based on it. Do not answer from memory or from the workspace listing. Reply now with exactly this block and nothing else:
+
+\`\`\`tool
+list_dir
+path: ${first}
+\`\`\``;
 }
 
 /** Sent when a final answer names files that were never seen in tool results. */

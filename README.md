@@ -515,6 +515,9 @@ selector probably matches an element that's always visible. Fix it in your overr
 
 **Browser window keeps popping up.** Turn off Settings → Show browser windows, or click **Hide**.
 
+**What did the agent actually do?** Every agent session is logged to `<data dir>/agent-logs/` (exact
+prompts, ChatGPT/Grok's raw replies, tool calls and results; last 30 kept).
+
 **See what the browser saw.** When a message times out or a selector fails, the bridge saves a
 screenshot and the page HTML to `<data dir>/debug/` (the last 10 failures per site) and logs the path.
 

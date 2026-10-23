@@ -6,6 +6,7 @@ import { BridgeError } from '../core/errors';
 import { Agent, type AgentEvent } from '../agent/agent';
 import { ProviderBackend } from '../agent/backend';
 import { Permissions, type ApprovalRequest } from '../agent/permissions';
+import { attachRunLog } from '../agent/runlog';
 
 const MAX_UI_OUTPUT = 20_000;
 const PROGRESS_INTERVAL_MS = 250;
@@ -92,7 +93,10 @@ export class AgentService {
     const agent = new Agent({ backend, root: input.workspace, permissions });
     const session: Session = { id, workspace: input.workspace, provider: input.provider, agent, permissions };
     let lastProgress = 0;
+    const logFile = attachRunLog(agent, this.bridge.dataDir, input.provider);
+    this.bridge.log.info(`agent session log: ${logFile}`);
     agent.on('event', (e: AgentEvent) => {
+      if (e.type === 'exchange') return; // run log only
       if (e.type === 'progress') {
         const now = Date.now();
         if (now - lastProgress < PROGRESS_INTERVAL_MS) return;

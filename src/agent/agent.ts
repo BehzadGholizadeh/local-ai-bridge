@@ -9,7 +9,10 @@ import {
   initialPrompt,
   mentionsFiles,
   mentionsSandbox,
+  taskTargets,
+  targetVisited,
   unseenFileNames,
+  unvisitedTargetCorrection,
   unseenFilesCorrection,
   NUDGE,
   parseReply,
@@ -32,6 +35,8 @@ export type AgentEvent =
   | { type: 'done'; answer: string; steps: number; toolRuns: number; grounded: boolean }
   /** Something the agent did on its own, e.g. re-prompting the model. */
   | { type: 'note'; text: string }
+  /** One round trip with the model: the exact message sent and the raw reply (for the run log). */
+  | { type: 'exchange'; step: number; prompt: string; reply: string; chatUrl?: string }
   | { type: 'error'; message: string }
   | { type: 'stopped' };
 
@@ -89,6 +94,10 @@ export class Agent extends EventEmitter {
     let toolRuns = 0;
     /** All tool output of this task, to check that file names in the answer were really seen. */
     let seenOutput = '';
+    /** Places the task names (drives, absolute paths) and the tool calls that really ran. */
+    const targets = taskTargets(task);
+    const executedCalls: { args: ToolArgs }[] = [];
+    let targetNudges = 0;
     try {
       let message: string;
       if (this.started) {
@@ -118,14 +127,24 @@ export class Agent extends EventEmitter {
         });
         if (reply.chatUrl) this.chatUrl = reply.chatUrl;
         this.transcript.push({ role: 'user', text: message }, { role: 'assistant', text: reply.text });
+        this.emitEvent({ type: 'exchange', step, prompt: message, reply: reply.text, chatUrl: this.chatUrl });
 
         const parsed = parseReply(reply.text);
         if (!parsed.calls.length && !parsed.errors.length) {
           // No tool call. Accept it as the final answer only if it says "DONE:" and is grounded:
           // no sandbox paths, and no claims about files unless a tool has actually run.
           const sandbox = mentionsSandbox(reply.text);
+          // The task names a drive or path that no executed tool has looked at yet.
+          const unvisited = parsed.done ? targets.filter((t) => !targetVisited(t, executedCalls)) : [];
+          if (unvisited.length && targetNudges < MAX_NUDGES) {
+            targetNudges++;
+            if (parsed.prose) this.emitEvent({ type: 'assistant', text: parsed.prose });
+            this.emitEvent({ type: 'note', text: `The model answered without looking at ${unvisited.join(', ')}: asking it to list it for real…` });
+            message = unvisitedTargetCorrection(unvisited);
+            continue;
+          }
           const unseen = parsed.done ? unseenFileNames(parsed.prose, seenOutput, this.opts.root) : [];
-          const ungrounded = sandbox || (toolRuns === 0 && mentionsFiles(reply.text));
+          const ungrounded = sandbox || (toolRuns === 0 && mentionsFiles(reply.text)) || unvisited.length > 0;
           if (parsed.done && !ungrounded && unseen.length && nudges < MAX_NUDGES) {
             nudges++;
             this.emitEvent({ type: 'note', text: `The answer names files no tool ever showed (${unseen.slice(0, 3).join(', ')}): asking the model to check…` });
@@ -160,6 +179,7 @@ export class Agent extends EventEmitter {
         if (parsed.prose) this.emitEvent({ type: 'assistant', text: parsed.prose });
         const results = await this.runCalls(parsed.calls, signal);
         toolRuns += results.filter((r) => r.executed).length;
+        executedCalls.push(...results.filter((r) => r.executed));
         seenOutput += results.map((r) => r.output).join('\n');
         message = resultsMessage(results, parsed.errors);
       }

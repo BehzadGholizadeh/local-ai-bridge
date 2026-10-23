@@ -8,6 +8,7 @@ import { Bridge } from '../core/bridge';
 import { defaultDataDir } from '../core/paths';
 import { Agent, type AgentEvent } from './agent';
 import { HttpBackend, ProviderBackend, type ChatBackend } from './backend';
+import { attachRunLog } from './runlog';
 import { PERMISSION_MODES, Permissions, type ApprovalRequest, type Decision, type PermissionMode } from './permissions';
 
 const VALUE_FLAGS = new Set(['provider', 'model', 'cwd', 'mode', 'max-steps', 'port']);
@@ -151,6 +152,7 @@ export async function runAgentCli(argv: string[]): Promise<number> {
 
   const permissions = new Permissions(mode, approver);
   const agent = new Agent({ backend, root, permissions, maxSteps: flags['max-steps'] ? Number(flags['max-steps']) : undefined });
+  const logFile = attachRunLog(agent, defaultDataDir(), provider);
 
   // One status line while waiting on the browser, redrawn every second with the elapsed time.
   let progressShown = false;
@@ -249,7 +251,8 @@ export async function runAgentCli(argv: string[]): Promise<number> {
 
   console.log(
     `${bold('Local AI Bridge agent')}  ${dim(`brain: ${backend.label} · workspace: ${root} · mode: ${mode}`)}` +
-      (mode === 'full-auto' ? `\n${yellow('full-auto: tools run without asking. Stop with Ctrl+C.')}` : ''),
+      (mode === 'full-auto' ? `\n${yellow('full-auto: tools run without asking. Stop with Ctrl+C.')}` : '') +
+      `\n${dim(`log: ${logFile}`)}`,
   );
 
   let current: AbortController | null = null;
