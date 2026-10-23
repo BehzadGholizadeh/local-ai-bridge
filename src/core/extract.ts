@@ -36,7 +36,7 @@ export function extractReplyHtml(el: Element, contentSelectors: string[]): strin
         const tag = o.tagName;
         if (tag === 'SPAN' && o.hasAttribute('data-d-inline') && !o.closest('a, code, pre')) {
           const st = getComputedStyle(o);
-          const bold = Number(st.fontWeight) >= 600;
+          const bold = Number(st.fontWeight) >= 600 || o.hasAttribute('data-d-default-strong');
           const italic = st.fontStyle === 'italic';
           if (bold || italic) wraps.push([c, bold, italic]);
         }

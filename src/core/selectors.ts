@@ -47,23 +47,33 @@ export const DEFAULT_SELECTORS: Record<ProviderId, SiteSelectors> = {
     newChatUrl: 'https://chatgpt.com/',
     modelUrlTemplate: 'https://chatgpt.com/?model={model}',
     input: [
+      // Signed in: a ProseMirror editor. Signed out: a plain textarea.
+      'div.ProseMirror[contenteditable="true"][data-composer-markdown]',
+      '#prompt-textarea',
       'textarea[name="prompt"]',
       'textarea[aria-label="Chat with ChatGPT"]',
-      '#prompt-textarea',
       'div.ProseMirror[contenteditable="true"]',
     ],
     sendButton: [
-      'button[aria-label="Send message"]',
       'button[data-testid="send-button"]',
       'button[aria-label="Send prompt"]',
+      'button[aria-label="Send message"]',
+      '#composer-submit-button:not([aria-label^="Stop" i])',
     ],
     stopButton: [
-      'button[aria-label="Stop generating"]',
       'button[data-testid="stop-button"]',
+      'button[aria-label="Stop generating"]',
       'button[aria-label="Stop streaming"]',
+      '#composer-submit-button[aria-label^="Stop" i]',
+      'form button[aria-label^="Stop" i]',
     ],
-    assistantMessage: ['li[data-message-role="assistant"]', '[data-message-author-role="assistant"]'],
-    assistantContent: ['[data-assistant-markdown-root]', '.markdown'],
+    assistantMessage: [
+      // Signed in: one block per turn, keyed "...:assistant".
+      '[data-chatgpt-search-unit-key$=":assistant"]',
+      'li[data-message-role="assistant"]',
+      '[data-message-author-role="assistant"]',
+    ],
+    assistantContent: ['[data-markdown-text-style="assistant-message"]', '[data-assistant-markdown-root]', '.markdown'],
     replyComplete: ['[data-message-complete]'],
     loggedOutMarkers: ['[data-testid="login-button"]', 'button:has-text("Log in")'],
     fileInput: ['input[type="file"]'],

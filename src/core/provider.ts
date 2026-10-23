@@ -475,21 +475,21 @@ export class WebChatProvider extends EventEmitter {
           throw new BridgeError('logged_out', `${this.name} asks you to sign in before it answers. Open the app and click "Log in".`);
         }
       }
-      if (sel.replyComplete.length) {
-        // The site marks finished replies: trust that (a "thinking" phase can show no text for minutes).
-        // ChatGPT marks the reply complete ~2s before its text renders, so also wait for stable text;
-        // a reply that stays empty for 10s after completing is genuinely empty (e.g. an image).
-        const complete = await reply
-          .evaluate((el, sels: string[]) => sels.some((s) => el.matches(s)), sel.replyComplete)
-          .catch(() => false);
-        if (!complete || generating) completeSince = 0;
-        else if (!completeSince) completeSince = Date.now();
-        if (completeSince && text && idle >= Math.min(sel.stableMs, 800)) break;
-        if (completeSince && !text && Date.now() - completeSince >= 10_000) break;
-      } else {
-        if (!generating && text && idle >= sel.stableMs) break;
-        if (!generating && !text && idle >= 60_000) break; // e.g. an image-only reply
-      }
+      // Completion. Two signals, whichever comes first:
+      // 1. The site's "finished" marker on the reply (replyComplete), when this page has one.
+      //    ChatGPT sets it ~2s before the text renders, so the text must also be stable.
+      // 2. No stop button and the text unchanged for a while. This also covers pages without a
+      //    marker (signed-in ChatGPT has none), where requiring it would wait until the timeout.
+      // An empty reply (e.g. an image) counts after 10s with the marker, or 90s without.
+      const complete =
+        sel.replyComplete.length > 0 &&
+        (await reply.evaluate((el, sels: string[]) => sels.some((s) => el.matches(s)), sel.replyComplete).catch(() => false));
+      if (!complete || generating) completeSince = 0;
+      else if (!completeSince) completeSince = Date.now();
+      if (completeSince && text && idle >= Math.min(sel.stableMs, 800)) break;
+      if (completeSince && !text && Date.now() - completeSince >= 10_000) break;
+      if (!generating && text && idle >= Math.max(sel.stableMs, 4_000)) break;
+      if (!generating && !text && idle >= 90_000) break;
       if (Date.now() - started > timeoutMs) {
         throw new BridgeError('timeout', `${this.name} did not finish within ${Math.round(timeoutMs / 1000)}s.`, text);
       }
