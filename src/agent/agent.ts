@@ -3,15 +3,7 @@ import { BridgeError } from '../core/errors';
 import type { SendPhase } from '../core/provider';
 import type { ChatBackend } from './backend';
 import type { Permissions } from './permissions';
-import {
-  followUpPrompt,
-  initialPrompt,
-  looksLikeToolRefusal,
-  parseReply,
-  resultsMessage,
-  TOOL_REMINDER,
-  type CallResult,
-} from './protocol';
+import { followUpPrompt, initialPrompt, NUDGE, parseReply, resultsMessage, type CallResult } from './protocol';
 import { ALL_TOOLS, truncateMiddle, validateArgs, type Tool, type ToolArgs, type ToolContext } from './tools';
 
 /** What the agent is doing, for the CLI / UI activity log. */
@@ -24,6 +16,8 @@ export type AgentEvent =
   | { type: 'tool_call'; id: string; tool: string; args: ToolArgs; summary: string }
   | { type: 'tool_result'; id: string; tool: string; ok: boolean; output: string; denied?: boolean }
   | { type: 'done'; answer: string; steps: number }
+  /** Something the agent did on its own, e.g. re-prompting the model. */
+  | { type: 'note'; text: string }
   | { type: 'error'; message: string }
   | { type: 'stopped' };
 
@@ -40,6 +34,10 @@ export interface AgentOptions {
 /** Results sent back to the model are capped so one huge output can't flood the chat. */
 const MAX_RESULT_CHARS = 20_000;
 const MAX_FALLBACK_CHARS = 60_000;
+/** Re-prompts per task when a reply has neither a tool call nor "DONE:". */
+const MAX_NUDGES = 2;
+/** Consecutive replies whose tool blocks can't be read before giving up. */
+const MAX_PROTOCOL_ERRORS = 3;
 
 /**
  * The agent loop: send the task → parse tool calls from the reply → check permissions → run tools
@@ -73,7 +71,8 @@ export class Agent extends EventEmitter {
     let message = this.started ? followUpPrompt(task) : initialPrompt(task, this.tools, this.opts.root);
     this.started = true;
     const maxSteps = this.opts.maxSteps ?? 40;
-    let reminded = false;
+    let nudges = 0;
+    let protocolErrors = 0;
     try {
       for (let step = 1; step <= maxSteps; step++) {
         if (signal?.aborted) throw new BridgeError('aborted', 'Stopped.');
@@ -90,18 +89,27 @@ export class Agent extends EventEmitter {
         this.transcript.push({ role: 'user', text: message }, { role: 'assistant', text: reply.text });
 
         const parsed = parseReply(reply.text);
-        if (!parsed.calls.length && !parsed.errors.length && !reminded && looksLikeToolRefusal(reply.text)) {
-          // The model answered as if it had no tools; remind it once before accepting that.
-          reminded = true;
-          this.emitEvent({ type: 'assistant', text: `${parsed.prose}\n\n(Reminding the model that it can call tools…)` });
-          message = TOOL_REMINDER;
+        if (!parsed.calls.length && !parsed.errors.length) {
+          // No tool call: finished only if the model says so ("DONE:"). Otherwise it probably
+          // described an action instead of requesting it (or used its own sandbox): nudge, twice at most.
+          if (parsed.done || nudges >= MAX_NUDGES) {
+            const answer = parsed.prose || reply.text || '(no reply)';
+            this.emitEvent({ type: 'done', answer, steps: step });
+            return answer;
+          }
+          nudges++;
+          if (parsed.prose) this.emitEvent({ type: 'assistant', text: parsed.prose });
+          this.emitEvent({ type: 'note', text: 'No tool call and no "DONE:" in that reply: asking the model to request a tool…' });
+          message = NUDGE;
           continue;
         }
-        if (!parsed.calls.length && !parsed.errors.length) {
-          const answer = parsed.prose || reply.text || '(no reply)';
-          this.emitEvent({ type: 'done', answer, steps: step });
-          return answer;
-        }
+        if (!parsed.calls.length) {
+          // Only unreadable tool blocks: send the errors back, but don't loop forever on them.
+          if (++protocolErrors > MAX_PROTOCOL_ERRORS) {
+            throw new BridgeError('internal', `The model's tool requests could not be read ${MAX_PROTOCOL_ERRORS} times in a row: ${parsed.errors[0]}`);
+          }
+          this.emitEvent({ type: 'note', text: `Could not read the tool request (${parsed.errors[0]}); asking the model to fix it…` });
+        } else protocolErrors = 0;
         if (parsed.prose) this.emitEvent({ type: 'assistant', text: parsed.prose });
         const results = await this.runCalls(parsed.calls, signal);
         message = resultsMessage(results, parsed.errors);

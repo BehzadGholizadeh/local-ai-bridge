@@ -159,6 +159,7 @@ export type AgentUiEvent =
     }
   | { type: 'approval_resolved'; requestId: string; decision: AgentDecision }
   | { type: 'done'; answer: string; steps: number }
+  | { type: 'note'; text: string }
   | { type: 'error'; message: string }
   | { type: 'stopped' }
   /** The run ended (after done / error / stopped); the session can take a follow-up task. */

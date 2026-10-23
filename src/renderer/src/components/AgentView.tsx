@@ -108,6 +108,8 @@ function reduce(items: Item[], e: AgentUiEvent): Item[] {
       return [...items, { kind: 'error', message: e.message }];
     case 'stopped':
       return [...items, { kind: 'note', text: 'Stopped.' }];
+    case 'note':
+      return [...items, { kind: 'note', text: e.text }];
     default:
       return items;
   }

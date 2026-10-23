@@ -2,9 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fail, ok, resolvePath, type Tool } from './types';
 
-const MAX_READ_LINES = 2000;
+const MAX_READ_LINES = 400;
 const MAX_LINE_CHARS = 2000;
-const MAX_READ_CHARS = 100_000;
+const MAX_READ_CHARS = 30_000;
 
 function isBinary(buf: Buffer): boolean {
   return buf.subarray(0, 8192).includes(0);

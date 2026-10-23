@@ -228,6 +228,10 @@ export async function runAgentCli(argv: string[]): Promise<number> {
         clearProgress();
         console.log(`\n${red('✖')} ${e.message}\n`);
         break;
+      case 'note':
+        clearProgress();
+        console.log(dim(`\n  ↻ ${e.text}`));
+        break;
       case 'stopped':
         clearProgress();
         console.log(`\n${yellow('■')} Stopped.\n`);

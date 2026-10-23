@@ -163,13 +163,32 @@ At a prompt: `y` allows once, `a` allows that tool for the rest of the session, 
 model is told and must take another approach). Writes show the new content and edits show a diff
 before you decide. The workspace is `--cwd` (default: the current folder).
 
-**How it works.** The web chats have no function-calling API, so the agent uses a text protocol:
-the first message explains the tools and asks the model to call them with fenced ```` ```tool ````
-JSON blocks; the agent runs them and sends the results back as the next message in the **same**
-conversation (`src/agent/protocol.ts`, `src/agent/agent.ts`). When a reply contains no tool block,
-the task is done. If the app or `serve` is already running, the CLI agent uses it over its MCP
-endpoint (so it can share the signed-in browser); otherwise it drives the browser itself
-(`--in-process` forces that).
+**How it works.** The web chats have no function-calling API, so the agent uses a text protocol
+(`src/agent/protocol.ts`, `src/agent/agent.ts`). The first message tells the model it is the planner
+for a controller program, bans its built-in tools and sandbox (`/mnt/data` etc. are not your computer),
+and explains the format: each call is a fenced ```` ```tool ```` block with the tool name, `key: value`
+lines, and raw content after a `---` line (edits as `<<<<<<< SEARCH` / `=======` / `>>>>>>> REPLACE`):
+
+````
+```tool
+write_file
+path: notes/hello.txt
+---
+Raw content: "quotes", C:\paths and newlines need no escaping.
+```
+````
+
+Code blocks survive the site's Markdown rendering, and raw payloads avoid the JSON-escaping mistakes
+models make with Windows paths and multi-line text. JSON blocks are still accepted (and repaired where
+safe), as are blocks the site rendered as escaped plain text. The agent runs the calls and sends the
+results back in the **same** conversation, with a short format reminder. A task ends when a reply
+starts with `DONE:`; a reply with neither a tool call nor `DONE:` gets a nudge (twice at most), and
+unreadable tool blocks get specific feedback (three times at most). If the app or `serve` is already
+running, the CLI agent uses it over its MCP endpoint (so it can share the signed-in browser);
+otherwise it drives the browser itself (`--in-process` forces that).
+
+While it waits, both the app and the CLI show what it is doing: *opening ChatGPT → typing → sending
+→ waiting for the reply → writing (N chars)*, with an elapsed-seconds counter.
 
 Notes: each step is a full web-chat round trip (a few seconds), so the agent is slower than API-based
 agents; signed-out ChatGPT has a small message allowance, so sign in for real work; Ctrl+C stops the
