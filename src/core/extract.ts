@@ -97,6 +97,10 @@ export function extractReplyHtml(el: Element, contentSelectors: string[]): strin
       }
       // List items with a single paragraph: unwrap it, otherwise the list renders "loose".
       for (const li of Array.from(clone.querySelectorAll('li'))) {
+        // Layout <div> wrappers inside list items also make lists loose.
+        for (const div of Array.from(li.querySelectorAll(':scope > div'))) {
+          if (!div.querySelector('pre, table, ul, ol')) div.replaceWith(...Array.from(div.childNodes));
+        }
         const ps = li.querySelectorAll('p');
         if (ps.length === 1 && !li.querySelector('ul, ol, pre, table')) ps[0].replaceWith(...Array.from(ps[0].childNodes));
       }

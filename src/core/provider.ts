@@ -138,7 +138,7 @@ export class WebChatProvider extends EventEmitter {
       if (!settings.showBrowsers) await this.setWindowState('minimized').catch(() => undefined);
       const sel = this.deps.getSelectors();
       if (!page.url().startsWith(new URL(sel.url).origin)) {
-        await page.goto(sel.url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+        await gotoWithRetry(page, sel.url, this.log);
       }
       await this.detectState(page, 15_000);
       return page;
@@ -304,7 +304,7 @@ export class WebChatProvider extends EventEmitter {
         if (prompt.trim() || !files.length) await typePrompt(page, input, prompt);
         if (files.length) {
           // The send button stays disabled until the site has finished uploading.
-          if (!(await submit(page, sel, input, 120_000, false))) {
+          if (!(await submit(page, sel, input, 120_000, true))) {
             throw new BridgeError('upload_failed', `${this.name} did not finish uploading the attachments. Check the browser window (click "Show").`);
           }
         } else {
@@ -321,11 +321,33 @@ export class WebChatProvider extends EventEmitter {
       } catch (e) {
         const err = BridgeError.from(e);
         this.log.warn(`send failed: ${err.code}: ${err.message}`);
+        if ((err.code === 'timeout' || err.code === 'selector' || err.code === 'upload_failed') && !page.isClosed()) {
+          await this.saveDebugSnapshot(page, err.code);
+        }
         if (err.code === 'rate_limited') this.setStatus('rate_limited', err.message, this._status.guest);
         else if (!page.isClosed()) await this.detectState(page, 0).catch(() => undefined);
         throw err;
       }
     });
+  }
+
+  /**
+   * Saves a screenshot and the page HTML next to the profiles (data dir/debug), so a failure the
+   * user can't see (minimized window) can be diagnosed, e.g. for fixing selectors. Keeps the last 10.
+   */
+  private async saveDebugSnapshot(page: Page, code: string): Promise<void> {
+    try {
+      const dir = path.join(path.dirname(path.dirname(this.deps.profileDir)), 'debug');
+      fs.mkdirSync(dir, { recursive: true });
+      const base = path.join(dir, `${this.id}-${new Date().toISOString().replace(/[:.]/g, '-')}-${code}`);
+      await page.screenshot({ path: `${base}.png`, fullPage: false, timeout: 10_000 });
+      fs.writeFileSync(`${base}.html`, await page.content());
+      const old = fs.readdirSync(dir).filter((f) => f.startsWith(`${this.id}-`)).sort();
+      for (const f of old.slice(0, Math.max(0, old.length - 20))) fs.rmSync(path.join(dir, f), { force: true });
+      this.log.warn(`saved page snapshot for troubleshooting: ${base}.png / .html`);
+    } catch (e) {
+      this.log.warn('could not save a page snapshot:', e);
+    }
   }
 
   /** Puts the files on the site's hidden file input, as if picked with the attach button. */
@@ -354,7 +376,7 @@ export class WebChatProvider extends EventEmitter {
       if (opts.model) this.log.warn(`model "${opts.model}" ignored: no modelUrlTemplate for ${this.name}`);
       target = sel.newChatUrl;
     }
-    await page.goto(target, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+    await gotoWithRetry(page, target, this.log);
   }
 
   private async waitForComposer(page: Page, sel: SiteSelectors): Promise<Locator> {
@@ -426,6 +448,8 @@ export class WebChatProvider extends EventEmitter {
     const started = Date.now();
     let text = '';
     let lastChange = Date.now();
+    let completeSince = 0;
+    let lastWallCheck = Date.now();
     while (true) {
       if (opts.signal?.aborted) {
         await clickStop(page, sel);
@@ -442,8 +466,30 @@ export class WebChatProvider extends EventEmitter {
       }
       const generating = !!(await findVisible(page, sel.stopButton, 0));
       const idle = Date.now() - lastChange;
-      if (!generating && text && idle >= sel.stableMs) break;
-      if (!generating && !text && idle >= 15_000) break; // e.g. an image-only reply
+      // No text yet and nothing generating: a limit or sign-in dialog may have replaced the reply.
+      if (!text && !generating && Date.now() - lastWallCheck > 5_000) {
+        lastWallCheck = Date.now();
+        const limit = await findRateLimit(page, sel);
+        if (limit) throw new BridgeError('rate_limited', `${this.name} usage limit: "${limit}"`);
+        if (await findPhrase(page, sel.loginWallPatterns)) {
+          throw new BridgeError('logged_out', `${this.name} asks you to sign in before it answers. Open the app and click "Log in".`);
+        }
+      }
+      if (sel.replyComplete.length) {
+        // The site marks finished replies: trust that (a "thinking" phase can show no text for minutes).
+        // ChatGPT marks the reply complete ~2s before its text renders, so also wait for stable text;
+        // a reply that stays empty for 10s after completing is genuinely empty (e.g. an image).
+        const complete = await reply
+          .evaluate((el, sels: string[]) => sels.some((s) => el.matches(s)), sel.replyComplete)
+          .catch(() => false);
+        if (!complete || generating) completeSince = 0;
+        else if (!completeSince) completeSince = Date.now();
+        if (completeSince && text && idle >= Math.min(sel.stableMs, 800)) break;
+        if (completeSince && !text && Date.now() - completeSince >= 10_000) break;
+      } else {
+        if (!generating && text && idle >= sel.stableMs) break;
+        if (!generating && !text && idle >= 60_000) break; // e.g. an image-only reply
+      }
       if (Date.now() - started > timeoutMs) {
         throw new BridgeError('timeout', `${this.name} did not finish within ${Math.round(timeoutMs / 1000)}s.`, text);
       }
@@ -475,7 +521,9 @@ async function launchContext(
       const ctx = await chromium.launchPersistentContext(profileDir, {
         headless: false,
         channel: channel === 'chromium' ? undefined : channel,
-        viewport: null,
+        // A fixed desktop-sized page: the window is usually minimized, and without this the sites
+        // can switch to their mobile layout, where the composer is hidden and sending fails.
+        viewport: { width: 1280, height: 900 },
         args: BROWSER_ARGS,
       });
       log.info(`browser started (${label})`);
@@ -493,6 +541,23 @@ async function launchContext(
     'browser_missing',
     `No usable browser. Install Google Chrome or Microsoft Edge, or run "npm run install-browser". (${detail})`,
   );
+}
+
+const TRANSIENT_NET = /ERR_(CONNECTION_RESET|CONNECTION_CLOSED|CONNECTION_REFUSED|NETWORK_CHANGED|INTERNET_DISCONNECTED|TIMED_OUT|EMPTY_RESPONSE|HTTP2_PROTOCOL_ERROR|QUIC_PROTOCOL_ERROR)/;
+
+/** Navigates, retrying transient network errors (flaky or filtered connections reset the first request). */
+async function gotoWithRetry(page: Page, url: string, log: { warn: (...a: unknown[]) => void }): Promise<void> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+      return;
+    } catch (e) {
+      const msg = (e as Error).message;
+      if (attempt >= 3 || !TRANSIENT_NET.test(msg)) throw e;
+      log.warn(`navigation failed (${msg.match(TRANSIENT_NET)?.[0]}), retrying (${attempt}/2)…`);
+      await sleep(2_000 * attempt);
+    }
+  }
 }
 
 const BROWSER_PATHS: Record<Exclude<BrowserChannel, 'auto' | 'chromium'>, () => string[]> = {
@@ -594,20 +659,71 @@ async function typePrompt(page: Page, input: Locator, prompt: string): Promise<v
   }
 }
 
+/** Length of the text still in the message box. */
+function composerLength(input: Locator): Promise<number> {
+  return input
+    .evaluate((el) => ('value' in el ? String((el as HTMLTextAreaElement).value) : (el.textContent ?? '')).trim().length)
+    .catch(() => 0);
+}
+
 /**
- * Clicks Send once it is enabled. If it never becomes clickable within `waitMs`, presses Enter
- * (when `enterFallback`) or returns false.
+ * Sends the typed message and confirms it left the message box (or a reply started). Overlays
+ * and site changes can make a click silently do nothing, so each method is checked before the
+ * next is tried: click Send → DOM click → Enter → submit the form.
+ *
+ * `waitMs`: how long Send may stay disabled first (long for uploads). With `requireButton`, a
+ * Send button that never enables means failure (the upload didn't finish) instead of trying Enter.
+ * Returns false only in that case; throws if the message could not be sent at all.
  */
-async function submit(page: Page, sel: SiteSelectors, input: Locator, waitMs = 5_000, enterFallback = true): Promise<boolean> {
+async function submit(page: Page, sel: SiteSelectors, input: Locator, waitMs = 5_000, requireButton = false): Promise<boolean> {
+  const typed = await composerLength(input);
+  const sent = async (ms: number) => {
+    const deadline = Date.now() + ms;
+    do {
+      // With text typed, only an emptied message box counts; without text (attachments only), a
+      // visible stop button does.
+      // The composer may be re-created after sending, so look it up again each time.
+      if (typed > 0) {
+        const box = await findVisible(page, sel.input, 0);
+        if (box && (await composerLength(box)) < typed / 2) return true;
+      } else if (await findVisible(page, sel.stopButton, 0)) return true;
+      await sleep(200);
+    } while (Date.now() < deadline);
+    return false;
+  };
+
+  // Wait for an enabled Send button (disabled while uploading or while the site processes a paste).
+  let btn: Locator | null = null;
   const deadline = Date.now() + waitMs;
   while (Date.now() < deadline) {
-    const btn = await findVisible(page, sel.sendButton, 0);
-    if (btn && (await btn.isEnabled().catch(() => false)) && (await press(btn))) return true;
+    const b = await findVisible(page, sel.sendButton, 0);
+    if (b && (await b.isEnabled().catch(() => false))) {
+      btn = b;
+      break;
+    }
     await sleep(250);
   }
-  if (!enterFallback) return false;
-  await input.press('Enter');
-  return true;
+  if (!btn && requireButton) return false;
+
+  const attempts: (() => Promise<unknown>)[] = [
+    ...(btn
+      ? [() => btn!.click({ timeout: 2_000 }), () => btn!.dispatchEvent('click')]
+      : []),
+    () => input.press('Enter'),
+    () =>
+      input.evaluate((el) => {
+        const form = el.closest('form');
+        if (form) form.requestSubmit();
+      }),
+  ];
+  for (const attempt of attempts) {
+    const tried = await attempt().then(
+      () => true,
+      () => false,
+    );
+    if (tried && (await sent(3_000))) return true;
+  }
+  throw new BridgeError('selector', 'The message was typed but could not be sent. The send button selector may be outdated, or something covers it.');
 }
 
 /** True if an <input accept="..."> list allows the file. Empty accept allows everything. */

@@ -24,6 +24,11 @@ export interface SiteSelectors {
   assistantMessage: string[];
   /** Inside an assistant reply: the rendered Markdown body. Falls back to the whole reply. */
   assistantContent: string[];
+  /**
+   * Optional: matches the reply element itself once the site considers it finished. When set, a
+   * reply only counts as complete when it matches (more reliable than the stop button alone).
+   */
+  replyComplete: string[];
   /** Present when the user is not signed in. */
   loggedOutMarkers: string[];
   /** The (usually hidden) file input behind the attach button. The best match for the files is used. */
@@ -59,9 +64,13 @@ export const DEFAULT_SELECTORS: Record<ProviderId, SiteSelectors> = {
     ],
     assistantMessage: ['li[data-message-role="assistant"]', '[data-message-author-role="assistant"]'],
     assistantContent: ['[data-assistant-markdown-root]', '.markdown'],
+    replyComplete: ['[data-message-complete]'],
     loggedOutMarkers: ['[data-testid="login-button"]', 'button:has-text("Log in")'],
     fileInput: ['input[type="file"]'],
     rateLimitPatterns: [
+      'message limit reached',
+      'anonymous message limit',
+      'you have reached',
       "you've reached",
       'you’ve reached',
       'usage cap',
@@ -84,6 +93,7 @@ export const DEFAULT_SELECTORS: Record<ProviderId, SiteSelectors> = {
     stopButton: ['button[aria-label="Stop model response"]', 'button[aria-label="Stop"]'],
     assistantMessage: ['div.items-start .message-bubble', '[data-testid="assistant-message"]'],
     assistantContent: ['.response-content-markdown', '.markdown'],
+    replyComplete: [],
     loggedOutMarkers: ['a[href*="sign-in"]', 'a[href*="accounts.x.ai"]', 'button:has-text("Sign in")'],
     fileInput: ['input[type="file"]'],
     rateLimitPatterns: ['message limit', 'reached your limit', 'rate limit', 'too many requests', 'upgrade to supergrok'],
