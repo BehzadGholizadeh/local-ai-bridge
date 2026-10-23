@@ -1,3 +1,4 @@
+import type { AgentDecision, AgentMode } from '../shared/types';
 import { isInside, type Risk, type Tool, type ToolArgs, type ToolContext } from './tools';
 
 /**
@@ -7,11 +8,11 @@ import { isInside, type Risk, type Tool, type ToolArgs, type ToolContext } from 
  * - full-auto: nothing asks. Only for trusted tasks: the model's instructions can be influenced by
  *   the files and command output it reads.
  */
-export type PermissionMode = 'ask' | 'auto-edit' | 'full-auto';
+export type PermissionMode = AgentMode;
 export const PERMISSION_MODES: PermissionMode[] = ['ask', 'auto-edit', 'full-auto'];
 
 /** allow once, deny, or allow this kind of call for the rest of the session. */
-export type Decision = 'allow' | 'deny' | 'always';
+export type Decision = AgentDecision;
 
 export interface ApprovalRequest {
   tool: string;

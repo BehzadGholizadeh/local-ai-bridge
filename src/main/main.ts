@@ -1,8 +1,18 @@
 import path from 'node:path';
-import { app, BrowserWindow, clipboard, ipcMain, Menu, nativeImage, nativeTheme, shell, Tray } from 'electron';
-import type { AppState, ProviderAction, ProviderId, SendInput, Settings } from '../shared/types';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, shell, Tray } from 'electron';
+import type {
+  AgentDecision,
+  AgentMode,
+  AgentStartInput,
+  AppState,
+  ProviderAction,
+  ProviderId,
+  SendInput,
+  Settings,
+} from '../shared/types';
 import { Bridge } from '../core/bridge';
 import { defaultDataDir } from '../core/paths';
+import { AgentService } from './agent-service';
 
 const isDev = process.argv.includes('--dev');
 const DEV_URL = 'http://localhost:5173';
@@ -13,6 +23,7 @@ app.setPath('userData', defaultDataDir());
 let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let bridge: Bridge;
+let agents: AgentService;
 let quitting = false;
 
 const iconPath = () => path.join(app.getAppPath(), 'assets', 'icon.png');
@@ -144,6 +155,21 @@ function registerIpc(): void {
   handle('selectors:reload', () => bridge.selectors.reload());
   handle('clipboard:write', (text: string) => clipboard.writeText(String(text)));
   handle('logs:get', () => bridge.log.entries);
+
+  handle('agent:defaults', () => ({ workspace: app.getPath('desktop') }));
+  handle('agent:pick-folder', async (current?: string) => {
+    const opts: Electron.OpenDialogOptions = {
+      title: 'Choose the agent workspace',
+      properties: ['openDirectory', 'createDirectory'],
+      defaultPath: current || app.getPath('desktop'),
+    };
+    const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
+    return r.canceled ? null : (r.filePaths[0] ?? null);
+  });
+  handle('agent:start', (input: AgentStartInput) => agents.start(input));
+  handle('agent:stop', (id: string) => agents.stop(id));
+  handle('agent:approve', (requestId: string, decision: AgentDecision) => agents.approve(requestId, decision));
+  handle('agent:set-mode', (id: string, mode: AgentMode) => agents.setMode(id, mode));
 }
 
 if (!app.requestSingleInstanceLock()) {
@@ -154,6 +180,7 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(async () => {
     Menu.setApplicationMenu(null);
     bridge = new Bridge(defaultDataDir());
+    agents = new AgentService(bridge, (p) => send('agent:event', p));
     bridge.on('status', (s) => send('status', s));
     bridge.on('api', (a) => send('api', a));
     bridge.chat.on('message', (p) => send('message', p));
@@ -179,6 +206,7 @@ if (!app.requestSingleInstanceLock()) {
     if (quitting || !bridge) return;
     quitting = true;
     e.preventDefault();
+    agents?.stopAll();
     bridge
       .stop()
       .catch(() => undefined)

@@ -134,6 +134,48 @@ export interface LogEntry {
   msg: string;
 }
 
+// ---------------------------------------------------------------- agent
+
+export type AgentMode = 'ask' | 'auto-edit' | 'full-auto';
+export type AgentDecision = 'allow' | 'deny' | 'always';
+
+/** Agent activity as shown in the app (mirrors the core AgentEvent, plus approvals). */
+export type AgentUiEvent =
+  | { type: 'task'; text: string }
+  | { type: 'thinking'; step: number }
+  | { type: 'progress'; chars: number }
+  | { type: 'assistant'; text: string }
+  | { type: 'tool_call'; id: string; tool: string; args: Record<string, unknown>; summary: string }
+  | { type: 'tool_result'; id: string; tool: string; ok: boolean; output: string; denied?: boolean }
+  | {
+      type: 'approval';
+      requestId: string;
+      tool: string;
+      summary: string;
+      args: Record<string, unknown>;
+      outside: boolean;
+    }
+  | { type: 'approval_resolved'; requestId: string; decision: AgentDecision }
+  | { type: 'done'; answer: string; steps: number }
+  | { type: 'error'; message: string }
+  | { type: 'stopped' }
+  /** The run ended (after done / error / stopped); the session can take a follow-up task. */
+  | { type: 'idle' };
+
+export interface AgentStartInput {
+  /** Continue this session (same web conversation) if workspace and provider are unchanged. */
+  sessionId?: string;
+  workspace: string;
+  provider: ProviderId;
+  mode: AgentMode;
+  task: string;
+}
+
+export interface AgentEventPatch {
+  sessionId: string;
+  event: AgentUiEvent;
+}
+
 /** API exposed to the renderer through the preload script (window.bridge). */
 export interface BridgeApi {
   getState(): Promise<AppState>;
@@ -154,4 +196,11 @@ export interface BridgeApi {
   onApi(cb: (a: ApiInfo) => void): () => void;
   onMessage(cb: (p: MessagePatch) => void): () => void;
   onHistoryChanged(cb: () => void): () => void;
+  agentDefaults(): Promise<{ workspace: string }>;
+  agentPickFolder(current?: string): Promise<string | null>;
+  agentStart(input: AgentStartInput): Promise<{ sessionId: string }>;
+  agentStop(sessionId: string): Promise<void>;
+  agentApprove(requestId: string, decision: AgentDecision): Promise<void>;
+  agentSetMode(sessionId: string, mode: AgentMode): Promise<void>;
+  onAgentEvent(cb: (p: AgentEventPatch) => void): () => void;
 }

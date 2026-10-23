@@ -4,15 +4,16 @@ import { PROVIDER_NAMES, type ConversationSummary } from '../../../shared/types'
 interface Props {
   conversations: ConversationSummary[];
   currentId: string | null;
-  view: 'chat' | 'settings';
+  view: 'chat' | 'settings' | 'agent';
   onOpen: (id: string) => void;
   onNew: () => void;
   onDelete: (id: string) => void;
   onRename: (id: string, title: string) => void;
   onSettings: () => void;
+  onAgent: () => void;
 }
 
-export function Sidebar({ conversations, currentId, view, onOpen, onNew, onDelete, onRename, onSettings }: Props) {
+export function Sidebar({ conversations, currentId, view, onOpen, onNew, onDelete, onRename, onSettings, onAgent }: Props) {
   const [filter, setFilter] = useState('');
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
@@ -28,6 +29,9 @@ export function Sidebar({ conversations, currentId, view, onOpen, onNew, onDelet
       <div className="brand">
         <span className="logo">⇄</span> Local AI Bridge
       </div>
+      <button className={`block ${view === 'agent' ? 'active' : ''}`} onClick={onAgent} title="Give a task to the local agent">
+        ⚙︎ Agent
+      </button>
       <button className="primary block" onClick={onNew}>
         + New chat
       </button>

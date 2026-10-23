@@ -131,6 +131,13 @@ An agent in the style of Claude Code / Codex: you give it a task, ChatGPT or Gro
 browser session) decides what to do, and tools run **on your computer**. It repeats
 "think → call tools → read results" until the task is done, showing each step.
 
+**In the desktop app:** click **Agent** in the sidebar, choose the workspace folder (default: your
+Desktop), the brain (ChatGPT or Grok) and the permission mode, and describe the task. The log shows
+the model's notes, each tool call (expand it for the output), approval cards with the new content or
+a diff, and the final answer. Follow-up tasks continue the same session; **New session** starts over.
+
+**In a terminal:**
+
 ```bash
 node dist/cli.js agent "List the files in this folder and summarize what this project does"
 node dist/cli.js agent --cwd ~/Desktop "Open title.pptx and change the first slide's title to 'Q3 Review'"
@@ -529,6 +536,8 @@ src/
   agent/permissions.ts   ask / auto-edit / full-auto approval rules
   agent/tools/           read_file, write_file, edit_file, list_dir, search, bash
   agent/cli.ts           local-ai-bridge agent
+  main/agent-service.ts  agent sessions in the desktop app (approvals over IPC)
+  renderer/src/components/AgentView.tsx   the Agent view
   mcp-stdio.ts           MCP over stdio, forwards to the running bridge
 docs/SELECTORS.md        how to fix selectors
 scripts/gen-icon.mjs     regenerates assets/icon.png

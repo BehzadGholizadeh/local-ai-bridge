@@ -37,6 +37,13 @@ const bridgeApi: import('../shared/types').BridgeApi = {
   onApi: subscribe('api'),
   onMessage: subscribe('message'),
   onHistoryChanged: subscribe('history:changed'),
+  agentDefaults: () => invoke('agent:defaults'),
+  agentPickFolder: (current) => invoke('agent:pick-folder', current),
+  agentStart: (input) => invoke('agent:start', input),
+  agentStop: (id) => invoke('agent:stop', id),
+  agentApprove: (requestId, decision) => invoke('agent:approve', requestId, decision),
+  agentSetMode: (id, mode) => invoke('agent:set-mode', id, mode),
+  onAgentEvent: subscribe('agent:event'),
 };
 
 contextBridge.exposeInMainWorld('bridge', bridgeApi);

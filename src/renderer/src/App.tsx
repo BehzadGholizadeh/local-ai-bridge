@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AppState, Conversation, ConversationSummary, MessagePatch, ProviderId, SendAttachment } from '../../shared/types';
+import { AgentView } from './components/AgentView';
 import { ChatView } from './components/ChatView';
 import { ProviderBar } from './components/ProviderBar';
 import { SettingsView } from './components/SettingsView';
@@ -33,7 +34,7 @@ export default function App() {
   const [state, setState] = useState<AppState | null>(null);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [current, setCurrent] = useState<Conversation | null>(null);
-  const [view, setView] = useState<'chat' | 'settings'>('chat');
+  const [view, setView] = useState<'chat' | 'settings' | 'agent'>('chat');
   const [error, setError] = useState<string | null>(null);
   const currentId = useRef<string | null>(null);
 
@@ -104,6 +105,7 @@ export default function App() {
         }
         onRename={(id, title) => run(() => api.renameConversation(id, title))}
         onSettings={() => setView(view === 'settings' ? 'chat' : 'settings')}
+        onAgent={() => setView(view === 'agent' ? 'chat' : 'agent')}
       />
       <main className="main">
         <ProviderBar
@@ -121,7 +123,9 @@ export default function App() {
             </button>
           </div>
         )}
-        {view === 'settings' ? (
+        {/* Kept mounted so a running task and its log survive switching views. */}
+        <AgentView hidden={view !== 'agent'} settings={state.settings} onError={setError} />
+        {view === 'agent' ? null : view === 'settings' ? (
           <SettingsView state={state} onSave={(patch) => run(() => api.updateSettings(patch))} onError={setError} />
         ) : (
           <ChatView
