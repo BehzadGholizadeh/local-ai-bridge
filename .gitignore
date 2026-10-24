@@ -9,3 +9,6 @@ Thumbs.db
 # Never commit browser profiles or local data if you point LAB_DATA_DIR inside the repo
 profiles/
 .data/
+
+# Stray second clone on the dev machine; never commit it
+/local-ai-bridge/
